@@ -537,7 +537,22 @@ function playFreeplay(onQuit) {
     speakTheTime(h, m, { echoSecondary: false });
     sfxSparkle();
   });
-  body.appendChild(sayBtn);
+
+  const controls = document.createElement("div");
+  controls.className = "game-controls";
+  controls.appendChild(sayBtn);
+
+  const backBtn = document.createElement("button");
+  backBtn.className = "ghost-btn";
+  backBtn.textContent = t("back_to_town", lang);
+  backBtn.addEventListener("click", () => {
+    sfxPop();
+    stopMusic();
+    onQuit();
+  });
+  controls.appendChild(backBtn);
+
+  body.appendChild(controls);
 
   node.querySelector("#progress-dots").innerHTML = "";
   node.querySelector("#replay-audio").onclick = () => {
