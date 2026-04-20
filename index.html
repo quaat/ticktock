@@ -16,7 +16,11 @@
   <div class="splash">
     <div class="sky"></div>
     <div class="sun"></div>
-    <div class="clouds"><div class="cloud c1"></div><div class="cloud c2"></div></div>
+    <div class="clouds">
+      <div class="cloud c1"></div>
+      <div class="cloud c2"></div>
+    </div>
+    <div class="sparkle-band" aria-hidden="true"></div>
     <div class="title-wrap">
       <div id="splash-tikko" class="tikko-slot big"></div>
       <h1 class="game-title">TickTock&nbsp;Town</h1>
@@ -27,18 +31,27 @@
 
 <template id="tpl-language">
   <div class="language">
-    <div id="lang-tikko" class="tikko-slot medium"></div>
-    <h2 data-i18n="choose_language">Choose your language</h2>
+    <div class="panel hero-panel">
+      <div id="lang-tikko" class="tikko-slot medium"></div>
+      <div class="hero-copy">
+        <h2 data-i18n="choose_language">Choose your language</h2>
+        <p data-i18n="language_preview">Listen and pick</p>
+      </div>
+    </div>
     <div class="lang-buttons">
       <button class="lang-btn" data-lang="en">
         <div class="flag">🇬🇧</div>
-        <div class="lang-name">English</div>
-        <div class="lang-sample">"Hello! I'm Tikko!"</div>
+        <div class="lang-meta">
+          <div class="lang-name">English</div>
+          <div class="lang-sample">"Hello! I'm Tikko!"</div>
+        </div>
       </button>
       <button class="lang-btn" data-lang="no">
         <div class="flag">🇳🇴</div>
-        <div class="lang-name">Norsk</div>
-        <div class="lang-sample">"Hei! Jeg heter Tikko!"</div>
+        <div class="lang-meta">
+          <div class="lang-name">Norsk</div>
+          <div class="lang-sample">"Hei! Jeg heter Tikko!"</div>
+        </div>
       </button>
     </div>
   </div>
@@ -46,12 +59,59 @@
 
 <template id="tpl-onboarding">
   <div class="onboarding">
-    <div id="ob-tikko" class="tikko-slot small float-left"></div>
-    <div class="speech-bubble"><span data-i18n="ob_drag">Can you move the big hand? Try it!</span>
-      <button class="replay-btn" aria-label="Replay">🔊</button>
+    <div class="coach-row">
+      <div id="ob-tikko" class="tikko-slot small"></div>
+      <div class="speech-bubble">
+        <div class="step-badges">
+          <span class="step-pill active" id="step-1-pill">1</span>
+          <span class="step-pill" id="step-2-pill">2</span>
+          <span class="step-pill" id="step-3-pill">3</span>
+        </div>
+        <div class="coach-text" id="ob-copy" data-i18n="ob_drag">Can you move the big hand? Try it!</div>
+        <button class="replay-btn" id="ob-replay" aria-label="Replay">🔊</button>
+      </div>
     </div>
-    <div id="ob-clock" class="clock-slot huge"></div>
-    <button class="primary-btn hidden" id="ob-continue" data-i18n="lets_go">Let's go!</button>
+    <div class="clock-stage">
+      <div id="ob-clock" class="clock-slot huge"></div>
+      <div class="digital-readout onboard-readout" id="ob-readout">9:00</div>
+    </div>
+    <div class="onboard-actions">
+      <button class="ghost-btn" id="ob-say" data-i18n="say_time">Say the time</button>
+      <button class="primary-btn hidden" id="ob-continue" data-i18n="lets_go">Let's go!</button>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-quicksetup">
+  <div class="settings setup-screen">
+    <div class="room-top compact">
+      <div class="tikko-line">
+        <div id="setup-tikko" class="tikko-slot small"></div>
+        <div>
+          <h2 data-i18n="quick_setup_title">Grown-up quick setup</h2>
+          <p data-i18n="quick_setup_hint">A few fast choices help Tikko teach at the right level.</p>
+        </div>
+      </div>
+    </div>
+    <div class="setting-group">
+      <h3 data-i18n="age_band">Age band</h3>
+      <div class="row" id="setup-age-band"></div>
+    </div>
+    <div class="setting-group">
+      <h3 data-i18n="language_mode">Audio replay</h3>
+      <div class="row" id="setup-replay-mode"></div>
+    </div>
+    <div class="setting-group">
+      <h3 data-i18n="session">Session length</h3>
+      <div class="row" id="setup-session"></div>
+    </div>
+    <div class="setting-group">
+      <h3 data-i18n="accessibility">Accessibility</h3>
+      <label class="toggle-row"><input type="checkbox" id="setup-captions"><span data-i18n="captions">Captions</span></label>
+      <label class="toggle-row"><input type="checkbox" id="setup-motion"><span data-i18n="reduced_motion">Reduced motion</span></label>
+      <label class="toggle-row"><input type="checkbox" id="setup-contrast"><span data-i18n="high_contrast">High contrast</span></label>
+    </div>
+    <button class="primary-btn" id="setup-save" data-i18n="save_and_play">Save and play</button>
   </div>
 </template>
 
@@ -60,21 +120,73 @@
     <div class="sky hub-sky"></div>
     <div class="sun hub-sun"></div>
     <div class="hills"></div>
-    <div class="town">
-      <button class="building b-bakery"     data-game="bakery"   aria-label="Bakery"><div class="b-icon">🥐</div><div class="b-label" data-i18n="b_bakery">Bakery</div><div class="b-stars"></div></button>
-      <button class="building b-garden"     data-game="garden"   aria-label="Garden"><div class="b-icon">🌻</div><div class="b-label" data-i18n="b_garden">Garden</div><div class="b-stars"></div></button>
-      <button class="building b-station"    data-game="station"  aria-label="Train Station"><div class="b-icon">🚂</div><div class="b-label" data-i18n="b_station">Station</div><div class="b-stars"></div></button>
-      <button class="building b-lighthouse" data-game="lighthouse" aria-label="Lighthouse"><div class="b-icon">🗼</div><div class="b-label" data-i18n="b_lighthouse">Lighthouse</div><div class="b-stars"></div></button>
-      <button class="building b-market"     data-game="market"   aria-label="Market"><div class="b-icon">🛒</div><div class="b-label" data-i18n="b_market">Market</div><div class="b-stars"></div></button>
-      <button class="building b-routine"    data-game="routine"  aria-label="Daily Routine"><div class="b-icon">📖</div><div class="b-label" data-i18n="b_routine">My Day</div><div class="b-stars"></div></button>
-      <button class="building b-tower"      data-game="freeplay" aria-label="Clock Tower"><div class="b-icon">🕰️</div><div class="b-label" data-i18n="b_tower">Tower</div></button>
+    <div class="hub-content">
+      <div class="stage-banner panel">
+        <div>
+          <div class="eyebrow" data-i18n="stage_now">Now learning</div>
+          <h2 id="hub-stage-title"></h2>
+          <p id="hub-stage-subtitle"></p>
+        </div>
+        <button class="primary-btn small" id="play-next-btn" data-i18n="play_next">Play next</button>
+      </div>
+
+      <div class="mission-card panel" id="mission-card">
+        <div class="mission-icon">🎯</div>
+        <div class="mission-copy">
+          <div class="eyebrow" data-i18n="daily_mission">Daily mission</div>
+          <strong id="mission-label"></strong>
+          <p id="mission-status"></p>
+        </div>
+        <button class="ghost-btn" id="mission-play" data-i18n="play_next">Play next</button>
+      </div>
+
+      <div class="hub-bar">
+        <button class="hud-chip star-chip" id="star-count"><span>⭐</span><span id="star-n">0</span></button>
+        <button class="hud-chip" id="streak-chip"><span>🔥</span><span id="streak-n">0</span></button>
+        <button class="hud-chip chest-chip" id="reward-btn"><span>🎁</span><span id="reward-state"></span></button>
+        <button class="hud-chip mood-chip" id="mood-chip"><span>🦉</span><span id="mood-label"></span></button>
+        <button class="hud-chip" id="settings-btn" aria-label="Settings">⚙️</button>
+      </div>
+
+      <div class="town">
+        <button class="building b-bakery" data-game="bakery" aria-label="Bakery">
+          <div class="b-icon">🥐</div>
+          <div class="b-label" data-i18n="b_bakery">Bakery</div>
+          <div class="b-stars"></div>
+        </button>
+        <button class="building b-garden" data-game="garden" aria-label="Garden">
+          <div class="b-icon">🌻</div>
+          <div class="b-label" data-i18n="b_garden">Garden</div>
+          <div class="b-stars"></div>
+        </button>
+        <button class="building b-station" data-game="station" aria-label="Station">
+          <div class="b-icon">🚂</div>
+          <div class="b-label" data-i18n="b_station">Station</div>
+          <div class="b-stars"></div>
+        </button>
+        <button class="building b-lighthouse" data-game="lighthouse" aria-label="Lighthouse">
+          <div class="b-icon">🗼</div>
+          <div class="b-label" data-i18n="b_lighthouse">Lighthouse</div>
+          <div class="b-stars"></div>
+        </button>
+        <button class="building b-market" data-game="market" aria-label="Market">
+          <div class="b-icon">🛒</div>
+          <div class="b-label" data-i18n="b_market">Market</div>
+          <div class="b-stars"></div>
+        </button>
+        <button class="building b-routine" data-game="routine" aria-label="Daily Routine">
+          <div class="b-icon">📖</div>
+          <div class="b-label" data-i18n="b_routine">My Day</div>
+          <div class="b-stars"></div>
+        </button>
+        <button class="building b-tower" data-game="freeplay" aria-label="Clock Tower">
+          <div class="b-icon">🕰️</div>
+          <div class="b-label" data-i18n="b_tower">Clock Tower</div>
+          <div class="b-stars"></div>
+        </button>
+      </div>
     </div>
     <div id="hub-tikko" class="tikko-slot small float-hub"></div>
-    <div class="hub-bar">
-      <button class="hud-chip star-chip" id="star-count"><span>⭐</span><span id="star-n">0</span></button>
-      <button class="hud-chip" id="trophy-btn" aria-label="Trophy Room">🏆</button>
-      <button class="hud-chip" id="settings-btn" aria-label="Settings">⚙️</button>
-    </div>
   </div>
 </template>
 
@@ -94,12 +206,23 @@
   <div class="trophy-room">
     <div class="room-top">
       <button class="back-btn" id="back-btn" aria-label="Back">←</button>
-      <h2 data-i18n="trophy_title">Trophy Room</h2>
+      <h2 data-i18n="trophy_title">Sticker & Trophy Room</h2>
     </div>
-    <div class="shelves" id="shelves"></div>
-    <div class="outfit-row">
+    <div class="panel reward-panel">
+      <h3 data-i18n="sticker_book">Sticker Book</h3>
+      <div class="sticker-grid" id="stickers"></div>
+    </div>
+    <div class="panel reward-panel">
+      <h3 data-i18n="medals_title">Mastery Medals</h3>
+      <div class="shelves" id="medals"></div>
+    </div>
+    <div class="panel reward-panel">
       <h3 data-i18n="tikkos_outfits">Tikko's Outfits</h3>
       <div class="outfits" id="outfits"></div>
+    </div>
+    <div class="panel reward-panel">
+      <h3>Recent treasures</h3>
+      <div class="shelves" id="shelves"></div>
     </div>
   </div>
 </template>
@@ -110,49 +233,58 @@
       <button class="back-btn" id="back-btn" aria-label="Back">←</button>
       <h2 data-i18n="settings_title">Grown-ups</h2>
     </div>
+
     <div class="setting-group">
-      <h3 data-i18n="language">Language</h3>
-      <div class="row">
-        <button class="chip" data-set-lang="en">🇬🇧 English</button>
-        <button class="chip" data-set-lang="no">🇳🇴 Norsk</button>
-        <button class="chip" data-set-lang="both" data-i18n="both_langs">Both</button>
-      </div>
+      <h3 data-i18n="profile">Child profile</h3>
+      <div class="profile-switcher" id="profile-switcher"></div>
+      <button class="ghost-btn" id="add-profile-btn">+ Add child</button>
     </div>
+
+    <div class="setting-group">
+      <h3 data-i18n="age_band">Age band</h3>
+      <div class="row" id="settings-age-band"></div>
+    </div>
+
+    <div class="setting-group">
+      <h3 data-i18n="language">Primary language</h3>
+      <div class="row" id="settings-primary-language"></div>
+      <h3 data-i18n="secondary_language">Replay language</h3>
+      <div class="row" id="settings-secondary-language"></div>
+    </div>
+
     <div class="setting-group">
       <h3 data-i18n="volume">Volume</h3>
       <label class="slider-row"><span data-i18n="music">Music</span><input type="range" min="0" max="100" id="vol-music"></label>
       <label class="slider-row"><span data-i18n="effects">Effects</span><input type="range" min="0" max="100" id="vol-sfx"></label>
       <label class="slider-row"><span data-i18n="voice">Voice</span><input type="range" min="0" max="100" id="vol-voice"></label>
     </div>
+
     <div class="setting-group">
       <h3 data-i18n="accessibility">Accessibility</h3>
+      <label class="toggle-row"><input type="checkbox" id="opt-captions"><span data-i18n="captions">Captions</span></label>
       <label class="toggle-row"><input type="checkbox" id="opt-motion"><span data-i18n="reduced_motion">Reduced motion</span></label>
       <label class="toggle-row"><input type="checkbox" id="opt-dyslexia"><span data-i18n="dyslexia_font">Dyslexia-friendly font</span></label>
       <label class="toggle-row"><input type="checkbox" id="opt-contrast"><span data-i18n="high_contrast">High contrast</span></label>
     </div>
+
     <div class="setting-group">
       <h3 data-i18n="session">Session length</h3>
-      <div class="row">
-        <button class="chip" data-session="0" data-i18n="unlimited">Unlimited</button>
-        <button class="chip" data-session="5">5 min</button>
-        <button class="chip" data-session="10">10 min</button>
-        <button class="chip" data-session="15">15 min</button>
-        <button class="chip" data-session="20">20 min</button>
-      </div>
+      <div class="row" id="settings-session"></div>
     </div>
-    <div class="setting-group danger">
-      <button class="chip" id="reset-progress" data-i18n="reset_progress">Reset progress</button>
-    </div>
-  </div>
-</template>
 
-<template id="tpl-parent-gate">
-  <div class="parent-gate">
-    <h2 data-i18n="gate_title">Grown-up check</h2>
-    <p data-i18n="gate_hint">Drag each slider to match its target.</p>
-    <div class="gate-slots" id="gate-slots"></div>
-    <button class="primary-btn" id="gate-submit" data-i18n="continue">Continue</button>
-    <button class="link-btn" id="gate-cancel" data-i18n="cancel">Cancel</button>
+    <div class="setting-group">
+      <h3 data-i18n="progress_summary">Progress summary</h3>
+      <div class="summary-grid">
+        <div class="summary-tile"><span data-i18n="rounds_played">Rounds played</span><strong id="summary-rounds">0</strong></div>
+        <div class="summary-tile"><span data-i18n="first_try_wins">First-try wins</span><strong id="summary-first">0</strong></div>
+        <div class="summary-tile"><span data-i18n="hints_used">Hints used</span><strong id="summary-hints">0</strong></div>
+      </div>
+      <button class="ghost-btn" id="copy-summary" data-i18n="export_summary">Copy summary</button>
+    </div>
+
+    <div class="setting-group danger">
+      <button class="chip danger-chip" id="reset-progress" data-i18n="reset_progress">Reset progress</button>
+    </div>
   </div>
 </template>
 

@@ -1,262 +1,533 @@
 // ============================================================================
-// screens.js — render functions for non-game screens.
+// screens.js — premium non-game screens and parent-facing controls
 // ============================================================================
 
-import { t, speakTime } from "./i18n.js";
-import { getState, setState, resetAll, OUTFITS, onChange } from "./state.js";
-import { mountTikko } from "./tikko.js";
+import { AGE_BANDS, GAME_META, OUTFITS, getMood, getRecommendedGame, getStageByStars } from "./content.js";
+import { createReplayHandler, describeReplayButton, speak, speakTheTime, startMusic, unlockAudio, sfxChime, sfxPop, sfxUnlock } from "./audio.js";
 import { createClock } from "./clock.js";
-import { sfxPop, sfxChime, sfxUnlock, speak, speakTheTime, startMusic, stopMusic, unlockAudio } from "./audio.js";
+import { HINT_LINES, PRAISE_LINES, pickLine, t, timeLabel } from "./i18n.js";
+import {
+  createProfileRecord,
+  ensureDailyMission,
+  getActiveProfile,
+  getLanguage,
+  getProgressSummary,
+  getReplayLanguage,
+  getState,
+  resetAll,
+  setActiveProfile,
+  setState,
+  shiftRewardQueue,
+  updateActiveProfile,
+} from "./state.js";
+import { mountTikko } from "./tikko.js";
 
 const app = () => document.getElementById("app");
 
 function clone(id) {
-  const tpl = document.getElementById(id);
-  return tpl.content.firstElementChild.cloneNode(true);
-}
-
-function applyI18n(root, lang) {
-  root.querySelectorAll("[data-i18n]").forEach(el => {
-    const key = el.getAttribute("data-i18n");
-    const v = t(key, lang);
-    if (v) el.textContent = v;
-  });
+  return document.getElementById(id).content.firstElementChild.cloneNode(true);
 }
 
 function mount(node) {
-  const a = app();
-  a.innerHTML = "";
-  a.appendChild(node);
+  const root = app();
+  root.innerHTML = "";
+  root.appendChild(node);
 }
 
-// ----------------------------------------------------------------------------
-// Splash
-// ----------------------------------------------------------------------------
+function applyI18n(root, lang) {
+  root.querySelectorAll("[data-i18n]").forEach((el) => {
+    const key = el.getAttribute("data-i18n");
+    el.textContent = t(key, lang);
+  });
+}
+
+function makeChip({ label, active = false, action, danger = false }) {
+  const btn = document.createElement("button");
+  btn.className = "chip";
+  if (active) btn.classList.add("active");
+  if (danger) btn.classList.add("danger-chip");
+  btn.textContent = label;
+  btn.addEventListener("click", action);
+  return btn;
+}
+
+function renderChoiceRow(container, items) {
+  container.innerHTML = "";
+  items.forEach((item) => container.appendChild(makeChip(item)));
+}
+
+function copyText(text, lang) {
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      alert(t("summary_copied", lang));
+    }).catch(() => {
+      alert(text);
+    });
+  } else {
+    alert(text);
+  }
+}
+
 export function showSplash(onDone) {
-  const s = getState();
-  const lang = s.language || "en";
+  const lang = getLanguage();
   const node = clone("tpl-splash");
   applyI18n(node, lang);
   mount(node);
-  mountTikko(node.querySelector("#splash-tikko"));
-  const proceed = () => {
+  mountTikko(node.querySelector("#splash-tikko"), { cheer: true });
+  node.addEventListener("pointerdown", () => {
     unlockAudio();
     sfxPop();
-    startMusic();
+    startMusic("town");
     onDone();
-  };
-  node.addEventListener("pointerdown", proceed, { once: true });
+  }, { once: true });
 }
 
-// ----------------------------------------------------------------------------
-// Language picker
-// ----------------------------------------------------------------------------
 export function showLanguagePicker(onPicked) {
   const node = clone("tpl-language");
-  const s = getState();
-  applyI18n(node, s.language || "en");
+  const lang = getLanguage();
+  applyI18n(node, lang);
   mount(node);
   mountTikko(node.querySelector("#lang-tikko"));
-  node.querySelectorAll(".lang-btn").forEach(btn => {
-    const lang = btn.dataset.lang;
-    // Preview voice on first render
-    btn.addEventListener("pointerenter", () => {
-      speak(lang === "no" ? "Hei! Jeg heter Tikko!" : "Hello! I'm Tikko!", lang);
-    }, { once: true });
+  node.querySelectorAll(".lang-btn").forEach((btn) => {
+    const nextLang = btn.dataset.lang;
+    const preview = nextLang === "no" ? "Hei! Jeg heter Tikko!" : "Hello! I'm Tikko!";
+    btn.addEventListener("pointerenter", () => speak(preview, nextLang), { once: true });
     btn.addEventListener("click", () => {
       sfxPop();
-      setState({ language: lang });
-      speak(lang === "no" ? "Hei! Jeg heter Tikko!" : "Hello! I'm Tikko!", lang);
-      applyI18n(node, lang);
-      setTimeout(onPicked, 900);
+      updateActiveProfile({ primaryLanguage: nextLang });
+      speak(preview, nextLang);
+      setTimeout(onPicked, 700);
     });
   });
 }
 
-// ----------------------------------------------------------------------------
-// Onboarding — "drag the big hand"
-// ----------------------------------------------------------------------------
 export function showOnboarding(onDone) {
+  const lang = getLanguage();
   const node = clone("tpl-onboarding");
-  const lang = getState().language || "en";
   applyI18n(node, lang);
   mount(node);
   mountTikko(node.querySelector("#ob-tikko"));
 
-  // Speak the prompt
-  const phrase = lang === "no"
-    ? "Kan du flytte den store viseren? Prøv!"
-    : "Can you move the big hand? Try it!";
-  setTimeout(() => speak(phrase, lang), 400);
+  const copyEl = node.querySelector("#ob-copy");
+  const continueBtn = node.querySelector("#ob-continue");
+  const sayBtn = node.querySelector("#ob-say");
+  const readout = node.querySelector("#ob-readout");
+  const replayBtn = node.querySelector("#ob-replay");
+  const pill1 = node.querySelector("#step-1-pill");
+  const pill2 = node.querySelector("#step-2-pill");
+  const pill3 = node.querySelector("#step-3-pill");
 
-  node.querySelector(".replay-btn").addEventListener("click", () => speak(phrase, lang));
+  let step = 1;
+  let minuteMoves = 0;
+  let hourMoves = 0;
+  let lastH = 9;
+  let lastM = 0;
 
-  const clockSlot = node.querySelector("#ob-clock");
-  let moved = 0;
-  const clock = createClock(clockSlot, {
-    hour: 9, minute: 0,
+  const prompts = {
+    1: t("ob_drag", lang),
+    2: t("ob_small", lang),
+    3: t("ob_listen", lang),
+  };
+
+  const clock = createClock(node.querySelector("#ob-clock"), {
+    hour: 9,
+    minute: 0,
     snap: "5min",
     showNumbers: true,
-    onChange: () => {
-      moved++;
-      if (moved >= 3 && btn.classList.contains("hidden")) {
-        btn.classList.remove("hidden");
-        sfxChime();
-        const praise = lang === "no" ? "Flott! Du er et naturtalent!" : "Great! You're a natural!";
-        speak(praise, lang);
+    onChange: (h, m) => {
+      readout.textContent = timeLabel(h, m);
+      if (step === 1 && m !== lastM) {
+        minuteMoves += 1;
+        if (minuteMoves >= 2) {
+          step = 2;
+          copyEl.textContent = prompts[2];
+          pill1.classList.add("done");
+          pill2.classList.add("active");
+          clock.setTime(3, 0);
+          lastH = 3;
+          lastM = 0;
+          readout.textContent = timeLabel(3, 0);
+          speak(prompts[2], lang);
+          return;
+        }
       }
+      if (step === 2 && h !== lastH) {
+        hourMoves += 1;
+        if (hourMoves >= 1) {
+          step = 3;
+          copyEl.textContent = prompts[3];
+          pill2.classList.add("done");
+          pill3.classList.add("active");
+          sfxChime();
+          speak(prompts[3], lang);
+        }
+      }
+      lastH = h;
+      lastM = m;
+    },
+  });
+
+  readout.textContent = timeLabel(9, 0);
+  const replay = createReplayHandler({ text: prompts[step], lang });
+  setTimeout(() => replay(), 350);
+  replayBtn.addEventListener("click", () => replay());
+  sayBtn.addEventListener("click", () => {
+    const [h, m] = clock.getTime();
+    speakTheTime(h, m);
+    if (step === 3) {
+      pill3.classList.add("done");
+      continueBtn.classList.remove("hidden");
+      sfxUnlock();
+      speak(pickLine(PRAISE_LINES, lang, 2), lang);
     }
   });
 
-  const btn = node.querySelector("#ob-continue");
-  btn.addEventListener("click", () => {
+  continueBtn.addEventListener("click", () => {
     sfxPop();
-    setState({ onboarded: true });
+    updateActiveProfile({ onboarded: true });
     onDone();
   });
 }
 
-// ----------------------------------------------------------------------------
-// Hub
-// ----------------------------------------------------------------------------
-export function showHub(onBuildingTap, onTrophy, onSettings) {
-  const node = clone("tpl-hub");
-  const s = getState();
-  const lang = s.language || "en";
+export function showQuickSetup(onDone) {
+  const lang = getLanguage();
+  const profile = getActiveProfile();
+  const node = clone("tpl-quicksetup");
   applyI18n(node, lang);
   mount(node);
-  mountTikko(node.querySelector("#hub-tikko"));
+  mountTikko(node.querySelector("#setup-tikko"), { cheer: true });
 
-  // star count
-  node.querySelector("#star-n").textContent = s.stars;
+  const otherLang = lang === "no" ? "en" : "no";
+  renderChoiceRow(node.querySelector("#setup-age-band"), AGE_BANDS.map((band) => ({
+    label: t(`age_${band.id.replace("-", "_")}`, lang),
+    active: profile.ageBand === band.id,
+    action: () => {
+      updateActiveProfile({ ageBand: band.id });
+      showQuickSetup(onDone);
+    },
+  })));
 
-  // stars per building
-  node.querySelectorAll(".building").forEach(btn => {
-    const key = btn.dataset.game;
-    const p = s.progress[key];
-    const unlocked = s.unlocked[key] !== false;
-    if (!unlocked) btn.classList.add("locked");
+  renderChoiceRow(node.querySelector("#setup-replay-mode"), [
+    {
+      label: t("primary_only", lang),
+      active: !profile.secondaryReplayLanguage,
+      action: () => {
+        updateActiveProfile({ secondaryReplayLanguage: null });
+        showQuickSetup(onDone);
+      },
+    },
+    {
+      label: t("replay_other", lang),
+      active: profile.secondaryReplayLanguage === otherLang,
+      action: () => {
+        updateActiveProfile({ secondaryReplayLanguage: otherLang });
+        showQuickSetup(onDone);
+      },
+    },
+  ]);
+
+  const sessionRoot = node.querySelector("#setup-session");
+  [5, 10, 15, 20].forEach((minutes) => {
+    sessionRoot.appendChild(makeChip({
+      label: `${minutes} min`,
+      active: getState().settings.sessionMinutes === minutes,
+      action: () => {
+        setState({ settings: { sessionMinutes: minutes } });
+        showQuickSetup(onDone);
+      },
+    }));
+  });
+
+  node.querySelector("#setup-captions").checked = !!getState().settings.captions;
+  node.querySelector("#setup-motion").checked = !!getState().settings.reducedMotion;
+  node.querySelector("#setup-contrast").checked = !!getState().settings.highContrast;
+
+  node.querySelector("#setup-save").addEventListener("click", () => {
+    setState({
+      settings: {
+        captions: node.querySelector("#setup-captions").checked,
+        reducedMotion: node.querySelector("#setup-motion").checked,
+        highContrast: node.querySelector("#setup-contrast").checked,
+      },
+    });
+    updateActiveProfile({ setupComplete: true });
+    applyBodyClasses();
+    sfxUnlock();
+    speak(lang === "no" ? "Flott! Byen er klar." : "Wonderful! The town is ready.", lang);
+    setTimeout(onDone, 450);
+  });
+}
+
+export function showHub(onBuildingTap, onTrophy, onSettings) {
+  const lang = getLanguage();
+  const profile = getActiveProfile();
+  const mission = ensureDailyMission();
+  const summary = getProgressSummary();
+  const stage = getStageByStars(profile.stars);
+  const node = clone("tpl-hub");
+  applyI18n(node, lang);
+  mount(node);
+  mountTikko(node.querySelector("#hub-tikko"), { outfit: profile.outfit });
+  startMusic("town");
+
+  node.querySelector("#hub-stage-title").textContent = t(stage.titleKey, lang);
+  node.querySelector("#hub-stage-subtitle").textContent = t(stage.subtitleKey, lang);
+  node.querySelector("#star-n").textContent = profile.stars;
+  node.querySelector("#streak-n").textContent = profile.streak;
+  node.querySelector("#reward-state").textContent = profile.rewardQueue.length ? `${profile.rewardQueue.length}` : "0";
+  node.querySelector("#reward-btn").title = profile.rewardQueue.length ? t("reward_ready", lang) : t("chest_empty", lang);
+  node.querySelector("#mood-label").textContent = t(`mood_${summary.mood}`, lang);
+  node.querySelector("#mission-label").textContent = t(GAME_META[mission.game]?.titleKey || "daily_mission", lang);
+  node.querySelector("#mission-status").textContent = mission.complete
+    ? t("mission_complete", lang)
+    : t("daily_ready", lang);
+  if (profile.rewardQueue.length) node.querySelector("#reward-btn").classList.add("pulse");
+
+  node.querySelector("#play-next-btn").textContent = `${t("play_next", lang)}: ${t(GAME_META[summary.recommendedGame].titleKey, lang)}`;
+  node.querySelector("#play-next-btn").addEventListener("click", () => {
+    sfxPop();
+    onBuildingTap(summary.recommendedGame);
+  });
+
+  node.querySelector("#mission-play").addEventListener("click", () => {
+    sfxPop();
+    onBuildingTap("daily");
+  });
+
+  node.querySelector("#reward-btn").addEventListener("click", () => {
+    sfxPop();
+    onTrophy();
+  });
+  node.querySelector("#settings-btn").addEventListener("click", () => {
+    sfxPop();
+    onSettings();
+  });
+  node.querySelector("#star-count").addEventListener("click", () => onTrophy());
+  node.querySelector("#mood-chip").addEventListener("click", () => {
+    speak(pickLine(HINT_LINES, lang, profile.stars), lang);
+  });
+
+  node.querySelectorAll(".building").forEach((btn) => {
+    const game = btn.dataset.game;
+    const progress = profile.progress[game];
+    const unlocked = GAME_META[game].unlockStage <= stage.index;
     const starsEl = btn.querySelector(".b-stars");
-    if (starsEl && p) starsEl.textContent = "⭐".repeat(p.stars || 0) || "";
+    starsEl.textContent = "⭐".repeat(progress?.stars || 0);
+    if (!unlocked) btn.classList.add("locked");
+    if (profile.decorations.includes(game)) btn.classList.add("decorated");
     btn.addEventListener("click", () => {
       if (!unlocked) {
         sfxPop();
-        speak(lang === "no" ? "Tjen flere stjerner for å åpne denne!" : "Earn more stars to open this!", lang);
+        speak(lang === "no" ? "Denne åpner snart!" : "This one opens soon!", lang);
         return;
       }
       sfxPop();
-      onBuildingTap(key);
+      onBuildingTap(game);
     });
   });
-
-  node.querySelector("#trophy-btn").addEventListener("click", () => { sfxPop(); onTrophy(); });
-  node.querySelector("#settings-btn").addEventListener("click", () => { sfxPop(); onSettings(); });
 }
 
-// ----------------------------------------------------------------------------
-// Trophy Room
-// ----------------------------------------------------------------------------
 export function showTrophyRoom(onBack) {
+  const lang = getLanguage();
+  const profile = getActiveProfile();
   const node = clone("tpl-trophy");
-  const s = getState();
-  applyI18n(node, s.language || "en");
+  applyI18n(node, lang);
   mount(node);
-  const shelves = node.querySelector("#shelves");
-  const items = s.trophies.slice(-24).reverse();
-  const itemIcons = {
-    bakery: "🥐", garden: "🌻", station: "🎫", lighthouse: "🗼",
-    market: "🏅", routine: "⭐", freeplay: "🌟",
-  };
-  if (!items.length) {
-    for (let i = 0; i < 8; i++) {
-      const div = document.createElement("div");
-      div.className = "trophy-item empty";
-      div.textContent = "?";
-      shelves.appendChild(div);
-    }
+
+  const stickers = node.querySelector("#stickers");
+  profile.stickers.slice(0, 24).forEach((sticker) => {
+    const item = document.createElement("div");
+    item.className = "sticker-item";
+    item.innerHTML = `<span>${sticker.icon}</span><small>${sticker.label}</small>`;
+    stickers.appendChild(item);
+  });
+
+  const medals = node.querySelector("#medals");
+  if (profile.medals.length) {
+    profile.medals.forEach((medal) => {
+      const item = document.createElement("div");
+      item.className = "trophy-item";
+      item.innerHTML = `${medal.icon}<small>${t(GAME_META[medal.game]?.medalKey || "mastery_badge", lang)}</small>`;
+      medals.appendChild(item);
+    });
   } else {
-    for (const it of items) {
-      const div = document.createElement("div");
-      div.className = "trophy-item";
-      div.textContent = it.icon || itemIcons[it.game] || "🏅";
-      shelves.appendChild(div);
-    }
+    const empty = document.createElement("div");
+    empty.className = "trophy-item empty";
+    empty.textContent = "🏅";
+    medals.appendChild(empty);
   }
+
+  const shelves = node.querySelector("#shelves");
+  profile.trophies.slice(0, 12).forEach((item) => {
+    const div = document.createElement("div");
+    div.className = "trophy-item";
+    div.textContent = item.icon;
+    shelves.appendChild(div);
+  });
+
   const outfitsEl = node.querySelector("#outfits");
-  for (const o of OUTFITS) {
+  OUTFITS.forEach((outfit) => {
     const btn = document.createElement("button");
     btn.className = "outfit";
-    const owned = s.unlockedOutfits.includes(o.id);
+    const owned = profile.unlockedOutfits.includes(outfit.id);
     if (!owned) btn.classList.add("locked");
-    if (s.outfit === o.id) btn.classList.add("active");
-    btn.textContent = owned ? o.icon : "🔒";
-    btn.title = o.label + (owned ? "" : ` (${o.stars}⭐)`);
+    if (profile.outfit === outfit.id) btn.classList.add("active");
+    btn.innerHTML = `<span>${owned ? outfit.icon : "🔒"}</span><small>${outfit.label}</small>`;
     btn.addEventListener("click", () => {
-      if (!owned) { sfxPop(); return; }
-      setState({ outfit: o.id });
+      if (!owned) {
+        sfxPop();
+        return;
+      }
+      updateActiveProfile({ outfit: outfit.id });
       sfxPop();
       showTrophyRoom(onBack);
     });
     outfitsEl.appendChild(btn);
+  });
+
+  const reward = shiftRewardQueue();
+  if (reward) {
+    const banner = document.createElement("div");
+    banner.className = "reward-banner panel";
+    banner.innerHTML = `<div class="reward-icon">${reward.icon}</div><div><strong>${t("new_item", lang)}: ${reward.label}</strong><p>${reward.description}</p></div>`;
+    node.insertBefore(banner, node.querySelector(".reward-panel"));
+    sfxUnlock();
   }
+
   node.querySelector("#back-btn").addEventListener("click", onBack);
 }
 
-// ----------------------------------------------------------------------------
-// Settings (behind parent gate)
-// ----------------------------------------------------------------------------
 export function showSettings(onBack) {
+  const lang = getLanguage();
+  const state = getState();
+  const profile = getActiveProfile();
+  const summary = getProgressSummary();
   const node = clone("tpl-settings");
-  const s = getState();
-  const lang = s.language || "en";
   applyI18n(node, lang);
   mount(node);
 
-  // Language chips
-  node.querySelectorAll("[data-set-lang]").forEach(btn => {
-    const v = btn.dataset.setLang;
-    const active = (v === "both" && s.bothLangs) ||
-                   (v !== "both" && s.language === v && !s.bothLangs);
-    if (active) btn.classList.add("active");
-    btn.addEventListener("click", () => {
-      sfxPop();
-      if (v === "both") setState({ bothLangs: true });
-      else setState({ language: v, bothLangs: false });
-      showSettings(onBack);
-    });
+  const switcher = node.querySelector("#profile-switcher");
+  Object.values(state.profiles).forEach((entry) => {
+    switcher.appendChild(makeChip({
+      label: entry.name,
+      active: entry.id === state.activeProfileId,
+      action: () => {
+        setActiveProfile(entry.id);
+        showSettings(onBack);
+      },
+    }));
+  });
+  node.querySelector("#add-profile-btn").addEventListener("click", () => {
+    const name = prompt(lang === "no" ? "Navn på barn" : "Child name");
+    if (!name) return;
+    createProfileRecord({ name, ageBand: profile.ageBand, primaryLanguage: lang });
+    showSettings(onBack);
   });
 
-  // Volumes
-  const volMusic = node.querySelector("#vol-music");
-  const volSfx   = node.querySelector("#vol-sfx");
-  const volVoice = node.querySelector("#vol-voice");
-  volMusic.value = s.settings.music;
-  volSfx.value   = s.settings.sfx;
-  volVoice.value = s.settings.voice;
-  volMusic.addEventListener("input", () => { setState({ settings: { music: +volMusic.value } }); startMusic(); });
-  volSfx.addEventListener("input",   () => setState({ settings: { sfx: +volSfx.value } }));
-  volVoice.addEventListener("input", () => setState({ settings: { voice: +volVoice.value } }));
-
-  // Accessibility
-  const motion = node.querySelector("#opt-motion");
-  const dys    = node.querySelector("#opt-dyslexia");
-  const contr  = node.querySelector("#opt-contrast");
-  motion.checked = s.settings.reducedMotion;
-  dys.checked    = s.settings.dyslexiaFont;
-  contr.checked  = s.settings.highContrast;
-  motion.addEventListener("change", () => { setState({ settings: { reducedMotion: motion.checked } }); applyBodyClasses(); });
-  dys.addEventListener("change",    () => { setState({ settings: { dyslexiaFont: dys.checked } }); applyBodyClasses(); });
-  contr.addEventListener("change",  () => { setState({ settings: { highContrast: contr.checked } }); applyBodyClasses(); });
-
-  // Session length chips
-  node.querySelectorAll("[data-session]").forEach(btn => {
-    const v = +btn.dataset.session;
-    if (s.settings.sessionMinutes === v) btn.classList.add("active");
-    btn.addEventListener("click", () => {
-      sfxPop();
-      setState({ settings: { sessionMinutes: v } });
+  renderChoiceRow(node.querySelector("#settings-age-band"), AGE_BANDS.map((band) => ({
+    label: t(`age_${band.id.replace("-", "_")}`, lang),
+    active: profile.ageBand === band.id,
+    action: () => {
+      updateActiveProfile({ ageBand: band.id });
       showSettings(onBack);
-    });
+    },
+  })));
+
+  renderChoiceRow(node.querySelector("#settings-primary-language"), [
+    {
+      label: "🇬🇧 English",
+      active: profile.primaryLanguage === "en",
+      action: () => {
+        updateActiveProfile({
+          primaryLanguage: "en",
+          secondaryReplayLanguage: profile.secondaryReplayLanguage === "en" ? null : profile.secondaryReplayLanguage,
+        });
+        showSettings(onBack);
+      },
+    },
+    {
+      label: "🇳🇴 Norsk",
+      active: profile.primaryLanguage === "no",
+      action: () => {
+        updateActiveProfile({
+          primaryLanguage: "no",
+          secondaryReplayLanguage: profile.secondaryReplayLanguage === "no" ? null : profile.secondaryReplayLanguage,
+        });
+        showSettings(onBack);
+      },
+    },
+  ]);
+
+  renderChoiceRow(node.querySelector("#settings-secondary-language"), [
+    {
+      label: t("none", lang),
+      active: !profile.secondaryReplayLanguage,
+      action: () => {
+        updateActiveProfile({ secondaryReplayLanguage: null });
+        showSettings(onBack);
+      },
+    },
+    {
+      label: profile.primaryLanguage === "no" ? "🇬🇧 English" : "🇳🇴 Norsk",
+      active: !!profile.secondaryReplayLanguage,
+      action: () => {
+        updateActiveProfile({ secondaryReplayLanguage: profile.primaryLanguage === "no" ? "en" : "no" });
+        showSettings(onBack);
+      },
+    },
+  ]);
+
+  node.querySelector("#vol-music").value = state.settings.music;
+  node.querySelector("#vol-sfx").value = state.settings.sfx;
+  node.querySelector("#vol-voice").value = state.settings.voice;
+  node.querySelector("#vol-music").addEventListener("input", (event) => setState({ settings: { music: +event.target.value } }));
+  node.querySelector("#vol-sfx").addEventListener("input", (event) => setState({ settings: { sfx: +event.target.value } }));
+  node.querySelector("#vol-voice").addEventListener("input", (event) => setState({ settings: { voice: +event.target.value } }));
+
+  node.querySelector("#opt-captions").checked = !!state.settings.captions;
+  node.querySelector("#opt-motion").checked = !!state.settings.reducedMotion;
+  node.querySelector("#opt-dyslexia").checked = !!state.settings.dyslexiaFont;
+  node.querySelector("#opt-contrast").checked = !!state.settings.highContrast;
+  node.querySelector("#opt-captions").addEventListener("change", (event) => setState({ settings: { captions: event.target.checked } }));
+  node.querySelector("#opt-motion").addEventListener("change", (event) => {
+    setState({ settings: { reducedMotion: event.target.checked } });
+    applyBodyClasses();
+  });
+  node.querySelector("#opt-dyslexia").addEventListener("change", (event) => {
+    setState({ settings: { dyslexiaFont: event.target.checked } });
+    applyBodyClasses();
+  });
+  node.querySelector("#opt-contrast").addEventListener("change", (event) => {
+    setState({ settings: { highContrast: event.target.checked } });
+    applyBodyClasses();
+  });
+
+  const sessionRoot = node.querySelector("#settings-session");
+  [0, 5, 10, 15, 20].forEach((minutes) => {
+    sessionRoot.appendChild(makeChip({
+      label: minutes ? `${minutes} min` : t("unlimited", lang),
+      active: state.settings.sessionMinutes === minutes,
+      action: () => {
+        setState({ settings: { sessionMinutes: minutes } });
+        showSettings(onBack);
+      },
+    }));
+  });
+
+  node.querySelector("#summary-rounds").textContent = summary.telemetry.roundsPlayed;
+  node.querySelector("#summary-first").textContent = summary.telemetry.firstTryWins;
+  node.querySelector("#summary-hints").textContent = summary.telemetry.hintsUsed;
+
+  node.querySelector("#copy-summary").addEventListener("click", () => {
+    const text = [
+      `${profile.name} — ${t(summary.stage.titleKey, lang)}`,
+      `${t("rounds_played", lang)}: ${summary.telemetry.roundsPlayed}`,
+      `${t("first_try_wins", lang)}: ${summary.telemetry.firstTryWins}`,
+      `${t("hints_used", lang)}: ${summary.telemetry.hintsUsed}`,
+      `${t("helper_mood", lang)}: ${t(`mood_${getMood(profile)}`, lang)}`,
+      `Replay: ${describeReplayButton()}`,
+    ].join("\n");
+    copyText(text, lang);
   });
 
   node.querySelector("#reset-progress").addEventListener("click", () => {
@@ -270,48 +541,8 @@ export function showSettings(onBack) {
 }
 
 export function applyBodyClasses() {
-  const s = getState();
-  document.body.classList.toggle("opt-motion",   !!s.settings.reducedMotion);
-  document.body.classList.toggle("opt-dyslexia", !!s.settings.dyslexiaFont);
-  document.body.classList.toggle("opt-contrast", !!s.settings.highContrast);
-}
-
-// ----------------------------------------------------------------------------
-// Parent Gate — drag three sliders to match targets
-// ----------------------------------------------------------------------------
-export function showParentGate(onPass, onCancel) {
-  const node = clone("tpl-parent-gate");
-  const lang = getState().language || "en";
-  applyI18n(node, lang);
-  mount(node);
-
-  const slotsEl = node.querySelector("#gate-slots");
-  const values = [0, 0, 0];
-  const targets = [];
-  for (let i = 0; i < 3; i++) {
-    const target = 20 + Math.floor(Math.random() * 60);
-    targets.push(target);
-    const slot = document.createElement("div");
-    slot.className = "gate-slot";
-    slot.innerHTML = `
-      <div class="gate-label">
-        <span>Slider ${i + 1}</span>
-        <span>Target: <span class="target">${target}</span></span>
-      </div>
-      <input type="range" min="0" max="100" value="0" />`;
-    const input = slot.querySelector("input");
-    input.addEventListener("input", () => { values[i] = +input.value; });
-    slotsEl.appendChild(slot);
-  }
-
-  node.querySelector("#gate-submit").addEventListener("click", () => {
-    if (values.every((v, i) => Math.abs(v - targets[i]) <= 2)) {
-      sfxChime();
-      onPass();
-    } else {
-      sfxPop();
-      alert(lang === "no" ? "Prøv igjen" : "Try again");
-    }
-  });
-  node.querySelector("#gate-cancel").addEventListener("click", onCancel);
+  const settings = getState().settings;
+  document.body.classList.toggle("opt-motion", !!settings.reducedMotion);
+  document.body.classList.toggle("opt-dyslexia", !!settings.dyslexiaFont);
+  document.body.classList.toggle("opt-contrast", !!settings.highContrast);
 }

@@ -59,17 +59,25 @@ No bundler, no transpiler. Edit, save, refresh.
 Since the app is 100% static, any static host works. Upload the entire project
 directory (`index.html`, `styles.css`, `js/`, `README.md`).
 
-### GitHub Pages
+### GitHub Pages (automated)
 
-```bash
-git init && git add . && git commit -m "Initial"
-git branch -M main
-git remote add origin git@github.com:<you>/ticktock-town.git
-git push -u origin main
-```
+The repo ships with `.github/workflows/deploy.yml`, which publishes the site
+to GitHub Pages on every push to `main`.
 
-In the repo settings → **Pages** → Source: `main` / root. Live at
-`https://<you>.github.io/ticktock-town/` within ~1 min.
+1. Push the repo to GitHub:
+   ```bash
+   git init && git add . && git commit -m "Initial"
+   git branch -M main
+   git remote add origin git@github.com:<you>/ticktock-town.git
+   git push -u origin main
+   ```
+2. In the repo's **Settings → Pages**, set **Source** to **GitHub Actions**
+   (one-time setup; the workflow handles the rest).
+3. Push any commit to `main` — or trigger a run manually from the **Actions**
+   tab (`Deploy to GitHub Pages → Run workflow`).
+
+The site is live at `https://<you>.github.io/<repo>/` once the workflow
+completes (~1 min). The `page_url` is also printed in the Actions run summary.
 
 ### Netlify
 

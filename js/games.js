@@ -1,238 +1,253 @@
 // ============================================================================
-// games.js — All mini-games share a simple frame:
-//   header (pause, progress dots, replay audio)
-//   body  (rendered by each game)
-//   overlay (feedback: correct / almost / round summary)
-//
-// A round typically has 4 puzzles. After a round, stars are tallied and
-// awarded, and a celebratory summary is shown.
+// games.js — premium mini-games, daily mission, and round feedback
 // ============================================================================
 
-import { t, speakTime, timeLabel } from "./i18n.js";
-import { getState, setState, recordResult, addTrophy } from "./state.js";
-import { createClock, renderStaticClock } from "./clock.js";
-import { mountTikko } from "./tikko.js";
-import {
-  sfxPop, sfxChime, sfxSoftMiss, sfxSparkle, sfxUnlock, speak, speakTheTime
-} from "./audio.js";
+import { createReplayHandler, speak, speakTheTime, startMusic, stopMusic, sfxChime, sfxHint, sfxPop, sfxSoftMiss, sfxSparkle, sfxUnlock } from "./audio.js";
+import { GAME_META, getRecommendedGame, getStageByStars, nextGameAfter } from "./content.js";
+import { createClock } from "./clock.js";
+import { HINT_LINES, PRAISE_LINES, pickLine, speakTime, t, timeLabel, timePrompt } from "./i18n.js";
+import { ensureDailyMission, getActiveProfile, getLanguage, getReplayLanguage, getState, recordRound } from "./state.js";
 
 const app = () => document.getElementById("app");
 
 function clone(id) {
   return document.getElementById(id).content.firstElementChild.cloneNode(true);
 }
-function applyI18n(root, lang) {
-  root.querySelectorAll("[data-i18n]").forEach(el => {
-    const v = t(el.getAttribute("data-i18n"), lang);
-    if (v) el.textContent = v;
-  });
-}
 
-// ---------------------------------------------------------------------------
-// Confetti
-// ---------------------------------------------------------------------------
-function confetti(container, n = 40) {
-  const c = document.createElement("div"); c.className = "confetti";
-  const colors = ["#FFD86B","#FF9CAA","#8CE0C4","#A8D0FF","#FFB86B","#D9C6FF"];
-  for (let i = 0; i < n; i++) {
-    const s = document.createElement("span");
-    s.style.left = Math.random() * 100 + "%";
-    s.style.background = colors[i % colors.length];
-    s.style.animationDuration = (1.4 + Math.random() * 1.2) + "s";
-    s.style.animationDelay = Math.random() * 0.3 + "s";
-    s.style.transform = `rotate(${Math.random() * 360}deg)`;
-    c.appendChild(s);
+function confetti(container, count = 40) {
+  const c = document.createElement("div");
+  c.className = "confetti";
+  const colors = ["#FFD86B", "#FF9CAA", "#8CE0C4", "#A8D0FF", "#FFB86B", "#D9C6FF"];
+  for (let i = 0; i < count; i += 1) {
+    const span = document.createElement("span");
+    span.style.left = `${Math.random() * 100}%`;
+    span.style.background = colors[i % colors.length];
+    span.style.animationDuration = `${1.5 + Math.random() * 1.2}s`;
+    span.style.animationDelay = `${Math.random() * 0.3}s`;
+    span.style.transform = `rotate(${Math.random() * 360}deg)`;
+    c.appendChild(span);
   }
   container.appendChild(c);
   setTimeout(() => c.remove(), 3500);
 }
 
-// ---------------------------------------------------------------------------
-// Game framing helpers
-// ---------------------------------------------------------------------------
-function makeGameShell(onQuit) {
+function makeGameShell(onQuit, theme = "town") {
   const node = clone("tpl-game");
-  const lang = getState().language || "en";
-  applyI18n(node, lang);
   app().innerHTML = "";
   app().appendChild(node);
+  startMusic(theme);
   node.querySelector("#pause-btn").addEventListener("click", () => {
-    if (confirm(lang === "no" ? "Avslutte?" : "Leave game?")) onQuit();
+    const lang = getLanguage();
+    if (confirm(lang === "no" ? "Avslutte denne runden?" : "Leave this round?")) {
+      stopMusic();
+      onQuit();
+    }
   });
   return node;
 }
 
-function setProgressDots(node, total, doneCount, currentIdx) {
-  const el = node.querySelector("#progress-dots");
-  el.innerHTML = "";
-  for (let i = 0; i < total; i++) {
-    const d = document.createElement("div");
-    d.className = "dot";
-    if (i < doneCount) d.classList.add("done");
-    if (i === currentIdx) d.classList.add("current");
-    el.appendChild(d);
+function setProgressDots(node, total, complete, current) {
+  const root = node.querySelector("#progress-dots");
+  root.innerHTML = "";
+  for (let i = 0; i < total; i += 1) {
+    const dot = document.createElement("div");
+    dot.className = "dot";
+    if (i < complete) dot.classList.add("done");
+    if (i === current) dot.classList.add("current");
+    root.appendChild(dot);
   }
 }
 
-// Generic success/fail overlay
-function feedback(node, kind, opts = {}) {
+function showOverlay(node, html, { confettiCount = 0, delay = 1200, sound = "chime" } = {}) {
   const overlay = node.querySelector("#overlay");
   overlay.classList.remove("hidden");
-  overlay.innerHTML = "";
-  const card = document.createElement("div");
-  card.className = "overlay-card";
-  const lang = getState().language || "en";
-  if (kind === "correct") {
-    card.innerHTML = `
-      <div class="emoji">${opts.emoji || "🎉"}</div>
-      <h2>${t("correct", lang)}</h2>
-      <div class="msg">${opts.msg || ""}</div>`;
-    confetti(node);
-    sfxChime();
-  } else {
-    card.innerHTML = `
-      <div class="emoji">${opts.emoji || "🦉"}</div>
-      <h2>${t("almost", lang)}</h2>
-      <div class="msg">${opts.msg || t("try_again", lang)}</div>`;
-    sfxSoftMiss();
-  }
-  overlay.appendChild(card);
-  setTimeout(() => { overlay.classList.add("hidden"); overlay.innerHTML = ""; }, opts.delay || 1400);
+  overlay.innerHTML = `<div class="overlay-card">${html}</div>`;
+  if (confettiCount) confetti(node, confettiCount);
+  if (sound === "chime") sfxChime();
+  if (sound === "miss") sfxSoftMiss();
+  setTimeout(() => {
+    overlay.classList.add("hidden");
+    overlay.innerHTML = "";
+  }, delay);
 }
 
-function roundSummary(node, starsEarned, game, onDone) {
+function calcStars(count, misses, hintsUsed) {
+  if (misses === 0 && hintsUsed === 0) return 3;
+  if (misses <= 2 && hintsUsed <= 1) return 2;
+  return 1;
+}
+
+function rewardSummary(node, game, roundStats, onQuit) {
+  const lang = getLanguage();
+  recordRound(game, roundStats);
+  const profile = getActiveProfile();
+  const nextKey = nextGameAfter(game, profile);
+  const stars = "⭐".repeat(roundStats.starsEarned) + "☆".repeat(3 - roundStats.starsEarned);
+  const label = game === "daily"
+    ? t("mission_complete", lang)
+    : `${t("next_stop", lang)}: ${t(GAME_META[nextKey].titleKey, lang)}`;
+
   const overlay = node.querySelector("#overlay");
   overlay.classList.remove("hidden");
-  overlay.innerHTML = "";
-  const card = document.createElement("div");
-  card.className = "overlay-card";
-  const lang = getState().language || "en";
-  const stars = "⭐".repeat(starsEarned) + "☆".repeat(3 - starsEarned);
-  card.innerHTML = `
-    <div class="emoji">🏆</div>
-    <h2>${t("correct", lang)}</h2>
-    <div class="stars">${stars}</div>
-    <div class="msg">+${starsEarned} ⭐</div>
-    <div class="row">
-      <button class="primary-btn" id="again">${t("play_again", lang)}</button>
-      <button class="link-btn" id="back">${t("back_to_town", lang)}</button>
+  overlay.innerHTML = `
+    <div class="overlay-card reward-card">
+      <div class="emoji">${GAME_META[game]?.icon || "🏆"}</div>
+      <h2>${roundStats.mastered ? t("mastery_badge", lang) : t("correct", lang)}</h2>
+      <div class="stars">${stars}</div>
+      <div class="msg">+${roundStats.starsEarned} ⭐</div>
+      <p>${label}</p>
+      <div class="row">
+        <button class="primary-btn" id="summary-next">${t("play_next", lang)}</button>
+        <button class="ghost-btn" id="summary-town">${t("back_to_town", lang)}</button>
+      </div>
     </div>`;
-  overlay.appendChild(card);
-  confetti(node, 80);
+  confetti(node, 70);
   sfxUnlock();
-  overlay.querySelector("#again").addEventListener("click", () => { sfxPop(); onDone("again"); });
-  overlay.querySelector("#back").addEventListener("click",  () => { sfxPop(); onDone("back"); });
-  recordResult(game, starsEarned);
-  // add a trophy item
-  const itemMap = { bakery: "🥐", garden: "🌻", station: "🎫", lighthouse: "💡", market: "🏅", routine: "⭐" };
-  addTrophy(game, { icon: itemMap[game] || "🏅" });
+  overlay.querySelector("#summary-next").addEventListener("click", () => {
+    sfxPop();
+    stopMusic();
+    startGameByKey(nextKey, onQuit);
+  });
+  overlay.querySelector("#summary-town").addEventListener("click", () => {
+    sfxPop();
+    stopMusic();
+    onQuit();
+  });
 }
 
-// ---------------------------------------------------------------------------
-// Generic "set-the-clock" game factory
-// Used by Bakery, Garden, Station, Lighthouse, Routine (with tweaks)
-// ---------------------------------------------------------------------------
-function setClockGame({ game, snap, count, generatePuzzle, promptKey, avatarForIndex, sceneForIndex, speechBuilder, onQuit }) {
-  const node = makeGameShell(onQuit);
+function buildPromptCard({ icon, title, caption }) {
+  const card = document.createElement("div");
+  card.className = "customer-card";
+  card.innerHTML = `
+    <div class="customer-avatar">${icon}</div>
+    <div class="customer-text">
+      <div>${title}</div>
+      <div class="caption-line">${caption}</div>
+    </div>`;
+  return card;
+}
+
+function stageFromProfile() {
+  return getStageByStars(getActiveProfile().stars);
+}
+
+function pushHint(clock, readout, puzzle) {
+  clock.setTime(puzzle.h, puzzle.m);
+  readout.textContent = timeLabel(puzzle.h, puzzle.m);
+}
+
+function buildReplay(primaryText, puzzle) {
+  const lang = getLanguage();
+  const replayLanguage = getReplayLanguage();
+  return createReplayHandler(
+    { text: primaryText, lang },
+    replayLanguage ? { text: speakTime(puzzle.h, puzzle.m, replayLanguage), lang: replayLanguage } : null,
+  );
+}
+
+function setClockRound({ game, count, theme, puzzles, onQuit }) {
+  const node = makeGameShell(onQuit, theme || game);
   const body = node.querySelector("#game-body");
-  const lang = getState().language || "en";
-  const puzzles = [];
-  for (let i = 0; i < count; i++) puzzles.push(generatePuzzle(i));
-  let idx = 0, correctCount = 0;
+  const lang = getLanguage();
+  const settings = getState().settings;
+  let index = 0;
+  let solved = 0;
+  let misses = 0;
+  let hintsUsed = 0;
+  let firstTryWins = 0;
 
   function renderPuzzle() {
-    const p = puzzles[idx];
-    setProgressDots(node, count, correctCount, idx);
+    const puzzle = puzzles[index];
     body.innerHTML = "";
+    setProgressDots(node, count, solved, index);
 
-    // Header card
-    const card = document.createElement("div");
-    card.className = "customer-card";
-    const avatar = avatarForIndex ? avatarForIndex(idx, p) : "🧑";
-    const prompt = t(promptKey, lang);
-    card.innerHTML = `
-      <div class="customer-avatar">${avatar}</div>
-      <div class="customer-text">
-        <div>${prompt}</div>
-        <div class="time-highlight">${timeLabel(p.h, p.m, lang)}</div>
-      </div>`;
-    body.appendChild(card);
+    const prompt = puzzle.prompt || timePrompt(game, puzzle.h, puzzle.m, lang);
+    body.appendChild(buildPromptCard({
+      icon: puzzle.icon || GAME_META[game]?.icon || "🦉",
+      title: prompt,
+      caption: settings.captions ? timeLabel(puzzle.h, puzzle.m) : t("tap_to_start", lang),
+    }));
 
-    // Scene (optional, for routine)
-    if (sceneForIndex) {
-      const scene = sceneForIndex(idx, p, lang);
-      if (scene) body.appendChild(scene);
-    }
+    if (puzzle.scene) body.appendChild(puzzle.scene);
 
-    // Clock
     const clockWrap = document.createElement("div");
     clockWrap.className = "game-clock";
     body.appendChild(clockWrap);
+
     const clock = createClock(clockWrap, {
-      hour: 12, minute: 0,
-      snap,
+      hour: puzzle.startH ?? 12,
+      minute: puzzle.startM ?? 0,
+      snap: puzzle.snap,
       showNumbers: true,
-      showHalfOverlay: game === "garden",
-      showQuarterOverlay: game === "station",
-      highlightHour: game === "garden" && p.m === 30 ? 6 : null,
+      showQuarterOverlay: puzzle.snap === "quarter" || puzzle.showQuarterOverlay,
+      showHalfOverlay: puzzle.snap === "half" || puzzle.showHalfOverlay,
+      highlightHour: puzzle.highlightHour || null,
       onChange: (h, m) => {
-        readout.textContent = timeLabel(h, m, lang);
-      }
+        readout.textContent = timeLabel(h, m);
+      },
     });
-    // digital readout
+
     const readout = document.createElement("div");
     readout.className = "digital-readout game-digital";
-    readout.textContent = timeLabel(12, 0, lang);
+    readout.textContent = timeLabel(clock.getTime()[0], clock.getTime()[1]);
     body.appendChild(readout);
 
-    // "Check" button
-    const check = document.createElement("button");
-    check.className = "primary-btn";
-    check.textContent = lang === "no" ? "Sjekk" : "Check";
-    body.appendChild(check);
+    const controls = document.createElement("div");
+    controls.className = "game-controls";
+    controls.innerHTML = `<button class="primary-btn">${lang === "no" ? "Sjekk" : "Check"}</button>`;
+    body.appendChild(controls);
 
-    // Speak the target time
-    const phrase = speechBuilder
-      ? speechBuilder(idx, p, lang)
-      : `${t(promptKey, lang)} ${speakTime(p.h, p.m, lang)}`;
-    setTimeout(() => speak(phrase, lang), 400);
-    node.querySelector("#replay-audio").onclick = () => speak(phrase, lang);
+    const replay = buildReplay(prompt, puzzle);
+    setTimeout(() => replay(), 350);
+    node.querySelector("#replay-audio").onclick = replay;
 
-    check.addEventListener("click", () => {
+    controls.querySelector("button").addEventListener("click", () => {
       const [h, m] = clock.getTime();
-      const ok = h === (p.h % 12) && m === p.m;
-      if (ok) {
+      if ((h % 12) === (puzzle.h % 12) && m === puzzle.m) {
+        const wasFirstTry = (puzzle._tries || 0) === 0;
+        if (wasFirstTry) firstTryWins += 1;
+        solved += 1;
         clock.flashCorrect();
-        correctCount++;
-        feedback(node, "correct", { emoji: avatar });
+        showOverlay(node, `
+          <div class="emoji">${puzzle.icon || "🎉"}</div>
+          <h2>${pickLine(PRAISE_LINES, lang, solved)}</h2>
+          <div class="msg">${speakTime(puzzle.h, puzzle.m, lang)}</div>
+        `, { confettiCount: 36, delay: 950, sound: "chime" });
+        speak(pickLine(PRAISE_LINES, lang, solved), lang);
         setTimeout(() => {
-          idx++;
-          if (idx >= count) {
-            const stars = correctCount === count ? 3 : (correctCount >= count - 1 ? 2 : 1);
-            roundSummary(node, stars, game, (action) => {
-              if (action === "again") startGameByKey(game, onQuit);
-              else onQuit();
-            });
+          index += 1;
+          if (index >= count) {
+            const starsEarned = calcStars(count, misses, hintsUsed);
+            rewardSummary(node, game, {
+              starsEarned,
+              misses,
+              hintsUsed,
+              firstTryWins,
+              mastered: hintsUsed === 0 && misses === 0,
+              level: stageFromProfile().index,
+            }, onQuit);
           } else {
             renderPuzzle();
           }
-        }, 1500);
+        }, 980);
       } else {
+        puzzle._tries = (puzzle._tries || 0) + 1;
+        misses += 1;
         clock.flashWrong();
-        // Gentle coaching: after 2 misses, show target
-        const miss = (p._misses || 0) + 1;
-        p._misses = miss;
-        feedback(node, "miss", {
-          emoji: "🦉",
-          msg: miss >= 2
-            ? (lang === "no" ? "Se her — prøv denne tiden" : "Here — try this one")
-            : t("try_again", lang)
-        });
-        if (miss >= 2) {
-          setTimeout(() => {
-            clock.setTime(p.h, p.m);
-            readout.textContent = timeLabel(p.h, p.m, lang);
-          }, 900);
+        const specificHint = t(puzzle.hintKey || "hint_hour", lang);
+        const message = puzzle._tries >= 2
+          ? `${pickLine(HINT_LINES, lang, misses)} ${specificHint}`
+          : t("try_again", lang);
+        showOverlay(node, `
+          <div class="emoji">🦉</div>
+          <h2>${t("almost", lang)}</h2>
+          <div class="msg">${message}</div>
+        `, { delay: 1100, sound: "miss" });
+        speak(message, lang);
+        if (puzzle._tries >= 2) {
+          hintsUsed += 1;
+          sfxHint();
+          setTimeout(() => pushHint(clock, readout, puzzle), 650);
         }
       }
     });
@@ -241,146 +256,135 @@ function setClockGame({ game, snap, count, generatePuzzle, promptKey, avatarForI
   renderPuzzle();
 }
 
-// ---------------------------------------------------------------------------
-// Bakery (o'clock) — level 1
-// ---------------------------------------------------------------------------
+function randomHour() {
+  return 1 + Math.floor(Math.random() * 11);
+}
+
 function playBakery(onQuit) {
-  const customers = ["👧","🧒","👦","🧔","👵","👴","🧑‍🎤","🧑‍🎨"];
-  setClockGame({
-    game: "bakery",
-    snap: "hour",
-    count: 4,
-    promptKey: "customer_wants",
-    avatarForIndex: i => customers[i % customers.length],
-    generatePuzzle: () => ({ h: 1 + Math.floor(Math.random() * 11), m: 0 }),
-    onQuit,
-  });
+  const stage = stageFromProfile();
+  const minutes = stage.index >= 2 ? [0, 30] : [0];
+  const puzzles = Array.from({ length: 4 }, (_, i) => ({
+    h: randomHour(),
+    m: minutes[Math.floor(Math.random() * minutes.length)],
+    snap: stage.index >= 2 ? "half" : "hour",
+    icon: ["👧", "🧒", "👨‍🍳", "👵"][i % 4],
+    hintKey: stage.index >= 2 ? "hint_half" : "hint_hour",
+  }));
+  setClockRound({ game: "bakery", count: puzzles.length, theme: "bakery", puzzles, onQuit });
 }
 
-// ---------------------------------------------------------------------------
-// Garden (half past) — level 2
-// ---------------------------------------------------------------------------
 function playGarden(onQuit) {
-  const flowers = ["🌻","🌷","🌹","🌺","🌼","💐"];
-  setClockGame({
-    game: "garden",
-    snap: "half",
-    count: 4,
-    promptKey: "water_at",
-    avatarForIndex: i => flowers[i % flowers.length],
-    generatePuzzle: () => {
-      const m = Math.random() < 0.5 ? 0 : 30;
-      return { h: 1 + Math.floor(Math.random() * 11), m };
-    },
-    onQuit,
+  const stage = stageFromProfile();
+  const minutes = stage.index >= 3 ? [0, 15, 30, 45] : [0, 30];
+  const puzzles = Array.from({ length: 4 }, () => {
+    const m = minutes[Math.floor(Math.random() * minutes.length)];
+    return {
+      h: randomHour(),
+      m,
+      snap: m % 30 === 0 ? "half" : "quarter",
+      showHalfOverlay: true,
+      showQuarterOverlay: stage.index >= 3,
+      icon: "🌻",
+      hintKey: m % 30 === 0 ? "hint_half" : "hint_quarter",
+      highlightHour: m === 30 ? 6 : null,
+    };
   });
+  setClockRound({ game: "garden", count: puzzles.length, theme: "garden", puzzles, onQuit });
 }
 
-// ---------------------------------------------------------------------------
-// Station (quarter past/to) — level 3
-// ---------------------------------------------------------------------------
 function playStation(onQuit) {
-  setClockGame({
-    game: "station",
+  const puzzles = Array.from({ length: 4 }, () => ({
+    h: randomHour(),
+    m: [0, 15, 30, 45][Math.floor(Math.random() * 4)],
     snap: "quarter",
-    count: 4,
-    promptKey: "train_at",
-    avatarForIndex: () => "🚂",
-    generatePuzzle: () => {
-      const mins = [0, 15, 30, 45];
-      return { h: 1 + Math.floor(Math.random() * 11), m: mins[Math.floor(Math.random() * 4)] };
-    },
-    onQuit,
-  });
+    showQuarterOverlay: true,
+    showHalfOverlay: true,
+    icon: "🚂",
+    hintKey: "hint_quarter",
+  }));
+  setClockRound({ game: "station", count: puzzles.length, theme: "station", puzzles, onQuit });
 }
 
-// ---------------------------------------------------------------------------
-// Lighthouse (5-min intervals) — level 4
-// ---------------------------------------------------------------------------
 function playLighthouse(onQuit) {
-  setClockGame({
-    game: "lighthouse",
+  const puzzles = Array.from({ length: 4 }, () => ({
+    h: randomHour(),
+    m: Math.floor(Math.random() * 12) * 5,
     snap: "5min",
-    count: 4,
-    promptKey: "beacon_at",
-    avatarForIndex: () => "🗼",
-    generatePuzzle: () => ({
-      h: 1 + Math.floor(Math.random() * 11),
-      m: Math.floor(Math.random() * 12) * 5,
-    }),
-    onQuit,
-  });
+    icon: "🗼",
+    hintKey: "hint_five",
+  }));
+  setClockRound({ game: "lighthouse", count: puzzles.length, theme: "lighthouse", puzzles, onQuit });
 }
 
-// ---------------------------------------------------------------------------
-// Routine (story mode) — real-life context
-// ---------------------------------------------------------------------------
 function playRoutine(onQuit) {
+  const lang = getLanguage();
+  const stage = stageFromProfile();
   const scenes = [
-    { key: "r_wakeup",    emoji: "🛏️", h: 7,  m: 0  },
-    { key: "r_breakfast", emoji: "🥣", h: 7,  m: 30 },
-    { key: "r_school",    emoji: "🎒", h: 8,  m: 15 },
-    { key: "r_lunch",     emoji: "🍱", h: 12, m: 0  },
-    { key: "r_play",      emoji: "⚽", h: 3,  m: 30 },
-    { key: "r_dinner",    emoji: "🍝", h: 6,  m: 0  },
-    { key: "r_bath",      emoji: "🛁", h: 7,  m: 30 },
-    { key: "r_bed",       emoji: "🌙", h: 8,  m: 0  },
+    { key: "r_wakeup", icon: "🛏️", h: 7, m: 0, snap: "hour" },
+    { key: "r_breakfast", icon: "🥣", h: 7, m: 30, snap: "half" },
+    { key: "r_school", icon: "🎒", h: 8, m: 15, snap: "quarter" },
+    { key: "r_lunch", icon: "🍱", h: 12, m: 0, snap: "hour" },
+    { key: "r_play", icon: "⚽", h: 3, m: 30, snap: "half" },
+    { key: "r_dinner", icon: "🍝", h: 6, m: 0, snap: "hour" },
+    { key: "r_bath", icon: "🛁", h: 7, m: 30, snap: "half" },
+    { key: "r_bed", icon: "🌙", h: 8, m: 0, snap: "hour" },
   ];
-  // pick 4 at random
-  const picks = scenes.sort(() => Math.random() - 0.5).slice(0, 4);
-  setClockGame({
-    game: "routine",
-    snap: "half",
-    count: 4,
-    promptKey: "your_day",
-    avatarForIndex: (i) => picks[i].emoji,
-    generatePuzzle: (i) => ({ h: picks[i].h, m: picks[i].m }),
-    sceneForIndex: (i, p, lang) => {
-      const pg = document.createElement("div");
-      pg.className = "routine-page";
-      pg.innerHTML = `
-        <div class="routine-scene">${picks[i].emoji}</div>
-        <div class="routine-caption">${t(picks[i].key, lang)}</div>`;
-      return pg;
-    },
-    speechBuilder: (i, p, lang) => {
-      const time = speakTime(p.h, p.m, lang);
-      // Avoid doubled "klokka" in Norwegian (speakTime prefixes it on whole hours)
-      const connector = lang === "no" ? (time.startsWith("klokka") ? "" : "klokka ") : "at ";
-      return `${t(picks[i].key, lang)} ${connector}${time}`;
-    },
-    onQuit,
+  const allowed = scenes.filter((scene) => {
+    if (stage.index === 1) return scene.m === 0;
+    if (stage.index === 2) return scene.m === 0 || scene.m === 30;
+    return true;
+  }).sort(() => Math.random() - 0.5).slice(0, 4);
+
+  const puzzles = allowed.map((scene) => {
+    const page = document.createElement("div");
+    page.className = "routine-page";
+    page.innerHTML = `
+      <div class="routine-scene">${scene.icon}</div>
+      <div class="routine-caption">${t(scene.key, lang)}</div>`;
+    return {
+      h: scene.h,
+      m: scene.m,
+      snap: scene.snap,
+      icon: scene.icon,
+      hintKey: scene.m === 0 ? "hint_hour" : (scene.m === 30 ? "hint_half" : "hint_quarter"),
+      prompt: `${t("your_day", lang)} ${t(scene.key, lang)}`,
+      scene: page,
+    };
   });
+  setClockRound({ game: "routine", count: puzzles.length, theme: "routine", puzzles, onQuit });
 }
 
-// ---------------------------------------------------------------------------
-// Market — memory/matching of analog and digital clocks
-// ---------------------------------------------------------------------------
 function playMarket(onQuit) {
-  const node = makeGameShell(onQuit);
+  const node = makeGameShell(onQuit, "market");
   const body = node.querySelector("#game-body");
-  const lang = getState().language || "en";
-
-  const pairs = 4;
+  const lang = getLanguage();
+  const replayLang = getReplayLanguage();
+  const stage = stageFromProfile();
   const times = [];
-  while (times.length < pairs) {
-    const h = 1 + Math.floor(Math.random() * 11);
-    const m = [0, 15, 30, 45][Math.floor(Math.random() * 4)];
-    if (!times.some(t => t.h === h && t.m === m)) times.push({ h, m });
+  while (times.length < 4) {
+    const candidate = {
+      h: randomHour(),
+      m: [0, 15, 30, 45][Math.floor(Math.random() * 4)],
+    };
+    if (!times.some((item) => item.h === candidate.h && item.m === candidate.m)) times.push(candidate);
   }
-  // cards: each time appears twice — once analog (A), once digital (D)
+
   const cards = [];
-  times.forEach((tm, i) => {
-    cards.push({ id: i, kind: "A", h: tm.h, m: tm.m });
-    cards.push({ id: i, kind: "D", h: tm.h, m: tm.m });
+  times.forEach((item, index) => {
+    cards.push({ id: index, kind: "A", ...item });
+    cards.push({
+      id: index,
+      kind: stage.index >= 4 && index % 2 === 0 ? "S" : "D",
+      ...item,
+    });
   });
   cards.sort(() => Math.random() - 0.5);
 
-  const header = document.createElement("div");
-  header.className = "customer-card";
-  header.innerHTML = `<div class="customer-avatar">🛒</div>
-    <div class="customer-text"><div>${t("match_pairs", lang)}</div></div>`;
-  body.appendChild(header);
+  body.appendChild(buildPromptCard({
+    icon: "🛒",
+    title: t("match_pairs", lang),
+    caption: stage.index >= 4 ? t("replay_primary", lang) : t("daily_ready", lang),
+  }));
 
   const grid = document.createElement("div");
   grid.className = "market-grid";
@@ -389,82 +393,129 @@ function playMarket(onQuit) {
   let selected = null;
   let matches = 0;
   let misses = 0;
+  let hintsUsed = 0;
+  let firstTryWins = 0;
 
-  cards.forEach((c, i) => {
-    const div = document.createElement("button");
-    div.className = "market-card";
-    if (c.kind === "A") {
-      div.classList.add("mini-clock");
-      const miniWrap = document.createElement("div");
-      miniWrap.style.width = "100%"; miniWrap.style.height = "100%";
-      createClock(miniWrap, { hour: c.h, minute: c.m, draggable: false, showNumbers: false });
-      div.appendChild(miniWrap);
+  function renderCard(card) {
+    const btn = document.createElement("button");
+    btn.className = "market-card";
+    if (card.kind === "A") {
+      btn.classList.add("mini-clock");
+      const wrap = document.createElement("div");
+      wrap.style.width = "100%";
+      wrap.style.height = "100%";
+      createClock(wrap, { hour: card.h, minute: card.m, draggable: false, showNumbers: false });
+      btn.appendChild(wrap);
+    } else if (card.kind === "S") {
+      btn.innerHTML = `<span class="speaker-card">🔊</span><small>${t("say_time", lang)}</small>`;
     } else {
-      div.textContent = timeLabel(c.h, c.m, lang);
+      btn.innerHTML = `<span>${timeLabel(card.h, card.m)}</span>`;
     }
-    div.dataset.index = i;
-    div.addEventListener("click", () => {
-      if (div.classList.contains("matched") || div === selected) return;
+    return btn;
+  }
+
+  cards.forEach((card) => {
+    const btn = renderCard(card);
+    btn.addEventListener("click", () => {
+      if (btn.classList.contains("matched") || btn === selected?.el) return;
       sfxPop();
-      if (!selected) {
-        div.classList.add("selected");
-        selected = { el: div, card: c };
-        speakTheTime(c.h, c.m);
+      if (card.kind === "S") {
+        speak(speakTime(card.h, card.m, lang), lang);
+        if (replayLang) node.querySelector("#replay-audio").onclick = createReplayHandler(
+          { text: speakTime(card.h, card.m, lang), lang },
+          { text: speakTime(card.h, card.m, replayLang), lang: replayLang }
+        );
       } else {
-        if (selected.card.id === c.id && selected.card.kind !== c.kind) {
-          selected.el.classList.remove("selected");
-          selected.el.classList.add("matched");
-          div.classList.add("matched");
-          selected = null;
-          matches++;
-          sfxChime();
-          speakTheTime(c.h, c.m);
-          if (matches === pairs) {
-            setTimeout(() => {
-              const stars = misses === 0 ? 3 : misses <= 2 ? 2 : 1;
-              roundSummary(node, stars, "market", (action) => {
-                if (action === "again") playMarket(onQuit); else onQuit();
-              });
-            }, 700);
-          }
-        } else {
-          // miss
-          selected.el.classList.add("wrong");
-          div.classList.add("wrong");
-          misses++;
-          sfxSoftMiss();
-          const prevEl = selected.el, newEl = div;
-          setTimeout(() => {
-            prevEl.classList.remove("selected", "wrong");
-            newEl.classList.remove("wrong");
-            selected = null;
-          }, 600);
+        speakTheTime(card.h, card.m);
+      }
+      if (!selected) {
+        btn.classList.add("selected");
+        selected = { el: btn, card, firstTry: true };
+        return;
+      }
+      if (selected.card.id === card.id && selected.card.kind !== card.kind) {
+        selected.el.classList.remove("selected");
+        selected.el.classList.add("matched");
+        btn.classList.add("matched");
+        matches += 1;
+        if (selected.firstTry) firstTryWins += 1;
+        selected = null;
+        sfxChime();
+        if (matches === times.length) {
+          const starsEarned = calcStars(times.length, misses, hintsUsed);
+          setTimeout(() => rewardSummary(node, "market", {
+            starsEarned,
+            misses,
+            hintsUsed,
+            firstTryWins,
+            mastered: misses === 0 && hintsUsed === 0,
+            level: stage.index,
+          }, onQuit), 450);
         }
+      } else {
+        misses += 1;
+        if (selected) selected.firstTry = false;
+        btn.classList.add("wrong");
+        selected.el.classList.add("wrong");
+        sfxSoftMiss();
+        if (misses >= 2) {
+          hintsUsed += 1;
+          sfxHint();
+        }
+        const old = selected;
+        setTimeout(() => {
+          old.el.classList.remove("selected", "wrong");
+          btn.classList.remove("wrong");
+          selected = null;
+        }, 650);
       }
     });
-    grid.appendChild(div);
+    grid.appendChild(btn);
   });
+
+  node.querySelector("#progress-dots").innerHTML = "🛒";
+  node.querySelector("#replay-audio").onclick = () => speak(stage.index >= 4
+    ? (lang === "no" ? "Match klokker og lyder." : "Match the clocks and sounds.")
+    : t("match_pairs", lang), lang);
 }
 
-// ---------------------------------------------------------------------------
-// Free-play sandbox (Clock Tower)
-// ---------------------------------------------------------------------------
 function playFreeplay(onQuit) {
-  const node = makeGameShell(onQuit);
+  const node = makeGameShell(onQuit, "freeplay");
   const body = node.querySelector("#game-body");
-  const lang = getState().language || "en";
-  node.querySelector("#progress-dots").innerHTML = "";
+  const lang = getLanguage();
+  const themes = [
+    { key: "weather_day", className: "theme-day" },
+    { key: "weather_evening", className: "theme-evening" },
+    { key: "weather_night", className: "theme-night" },
+  ];
 
-  const intro = document.createElement("div");
-  intro.className = "customer-card";
-  intro.innerHTML = `<div class="customer-avatar">🕰️</div>
-    <div class="customer-text">${lang === "no" ? "Lek og lytt" : "Play and listen"}</div>`;
-  body.appendChild(intro);
+  body.appendChild(buildPromptCard({
+    icon: "🕰️",
+    title: t("free_play_title", lang),
+    caption: t("say_time", lang),
+  }));
+
+  const scene = document.createElement("div");
+  scene.className = "freeplay-scene theme-day";
+  body.appendChild(scene);
+
+  const themeRow = document.createElement("div");
+  themeRow.className = "theme-row";
+  themes.forEach((theme) => {
+    const btn = document.createElement("button");
+    btn.className = "chip";
+    btn.textContent = t(theme.key, lang);
+    btn.addEventListener("click", () => {
+      scene.className = `freeplay-scene ${theme.className}`;
+      sfxPop();
+    });
+    themeRow.appendChild(btn);
+  });
+  body.appendChild(themeRow);
 
   const clockWrap = document.createElement("div");
   clockWrap.className = "game-clock";
   body.appendChild(clockWrap);
-
   const readout = document.createElement("div");
   readout.className = "digital-readout game-digital";
   body.appendChild(readout);
@@ -474,43 +525,51 @@ function playFreeplay(onQuit) {
     minute: Math.round(new Date().getMinutes() / 5) * 5,
     snap: "5min",
     showNumbers: true,
-    onChange: (h, m) => {
-      readout.textContent = timeLabel(h, m, lang);
-    },
+    onChange: (h, m) => { readout.textContent = timeLabel(h, m); },
   });
-  const [h0, m0] = clock.getTime();
-  readout.textContent = timeLabel(h0, m0, lang);
+  readout.textContent = timeLabel(clock.getTime()[0], clock.getTime()[1]);
 
-  const speakBtn = document.createElement("button");
-  speakBtn.className = "primary-btn";
-  speakBtn.textContent = lang === "no" ? "Si tiden" : "Say the time";
-  speakBtn.addEventListener("click", () => {
+  const sayBtn = document.createElement("button");
+  sayBtn.className = "primary-btn";
+  sayBtn.textContent = t("say_time", lang);
+  sayBtn.addEventListener("click", () => {
     const [h, m] = clock.getTime();
-    speakTheTime(h, m);
+    speakTheTime(h, m, { echoSecondary: false });
     sfxSparkle();
   });
-  body.appendChild(speakBtn);
+  body.appendChild(sayBtn);
 
+  node.querySelector("#progress-dots").innerHTML = "";
   node.querySelector("#replay-audio").onclick = () => {
     const [h, m] = clock.getTime();
-    speakTheTime(h, m);
+    speakTheTime(h, m, { echoSecondary: false });
   };
 }
 
-// ---------------------------------------------------------------------------
-// Dispatcher
-// ---------------------------------------------------------------------------
+function playDailyMission(onQuit) {
+  const mission = ensureDailyMission();
+  const stage = stageFromProfile();
+  const game = mission.game;
+  if (stage.index <= 2) return playBakery(onQuit);
+  if (game === "garden") return playGarden(onQuit);
+  if (game === "station") return playStation(onQuit);
+  if (game === "lighthouse") return playLighthouse(onQuit);
+  if (game === "market") return playMarket(onQuit);
+  return playRoutine(onQuit);
+}
+
 const GAMES = {
-  bakery:     playBakery,
-  garden:     playGarden,
-  station:    playStation,
+  bakery: playBakery,
+  garden: playGarden,
+  station: playStation,
   lighthouse: playLighthouse,
-  market:     playMarket,
-  routine:    playRoutine,
-  freeplay:   playFreeplay,
+  market: playMarket,
+  routine: playRoutine,
+  freeplay: playFreeplay,
+  daily: playDailyMission,
 };
 
 export function startGameByKey(key, onQuit) {
-  const fn = GAMES[key] || playFreeplay;
+  const fn = GAMES[key] || GAMES[getRecommendedGame(getActiveProfile())] || playFreeplay;
   fn(onQuit);
 }

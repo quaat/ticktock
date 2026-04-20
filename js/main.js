@@ -1,14 +1,20 @@
 // ============================================================================
-// main.js — entry, router, session timer
+// main.js — app router and session flow
 // ============================================================================
 
-import { getState, setState } from "./state.js";
-import {
-  showSplash, showLanguagePicker, showOnboarding, showHub,
-  showTrophyRoom, showSettings, showParentGate, applyBodyClasses,
-} from "./screens.js";
+import { speak, stopMusic } from "./audio.js";
 import { startGameByKey } from "./games.js";
-import { startMusic, stopMusic, speak } from "./audio.js";
+import {
+  applyBodyClasses,
+  showHub,
+  showLanguagePicker,
+  showOnboarding,
+  showQuickSetup,
+  showSettings,
+  showSplash,
+  showTrophyRoom,
+} from "./screens.js";
+import { getActiveProfile, getLanguage, getState, setState } from "./state.js";
 
 function init() {
   applyBodyClasses();
@@ -16,12 +22,16 @@ function init() {
 }
 
 function route(where) {
-  const s = getState();
+  const profile = getActiveProfile();
+  const lang = getLanguage();
+  if (typeof where === "string") setState({ currentRoute: where });
+
   switch (where) {
     case "boot":
       showSplash(() => {
-        if (!s.language) route("language");
-        else if (!s.onboarded) route("onboarding");
+        if (!profile.primaryLanguage) route("language");
+        else if (!profile.onboarded) route("onboarding");
+        else if (!profile.setupComplete) route("quicksetup");
         else route("hub");
       });
       break;
@@ -29,64 +39,57 @@ function route(where) {
       showLanguagePicker(() => route("onboarding"));
       break;
     case "onboarding":
-      showOnboarding(() => route("hub"));
+      showOnboarding(() => route("quicksetup"));
+      break;
+    case "quicksetup":
+      showQuickSetup(() => route("hub"));
       break;
     case "hub":
-      startMusic();
       setState({ sessionStart: Date.now() });
       checkSessionTimer();
       showHub(
         (game) => route({ type: "game", game }),
         () => route("trophy"),
-        () => route("gate"),
+        () => route("settings"),
       );
       break;
     case "trophy":
       showTrophyRoom(() => route("hub"));
       break;
-    case "gate":
-      showParentGate(
-        () => route("settings"),
-        () => route("hub"),
-      );
-      break;
     case "settings":
       showSettings(() => route("hub"));
       break;
     default:
-      if (where && where.type === "game") {
-        stopMusicSoftly();
+      if (where?.type === "game") {
         startGameByKey(where.game, () => route("hub"));
+      } else {
+        route("hub");
       }
   }
 }
 
-function stopMusicSoftly() { stopMusic(); }
-
-// Session length timer: gentle Tikko goodbye
-let sessionCheckTimer = null;
+let sessionTimer = null;
 function checkSessionTimer() {
-  clearTimeout(sessionCheckTimer);
-  const s = getState();
-  const mins = s.settings.sessionMinutes || 0;
+  clearTimeout(sessionTimer);
+  const mins = getState().settings.sessionMinutes || 0;
   if (!mins) return;
-  const elapsed = (Date.now() - (s.sessionStart || Date.now())) / 60000;
+  const elapsed = (Date.now() - (getState().sessionStart || Date.now())) / 60000;
   const remaining = mins - elapsed;
   if (remaining <= 0) {
-    const lang = s.language || "en";
-    speak(lang === "no"
-      ? "Det var alt for nå! Vi sees snart!"
-      : "That's all for now! See you soon!", lang);
+    speak(
+      getLanguage() === "no"
+        ? "Det var alt for nå. Vi sees snart!"
+        : "That is all for now. See you soon!",
+      getLanguage(),
+    );
+    stopMusic();
     return;
   }
-  sessionCheckTimer = setTimeout(checkSessionTimer, Math.min(remaining, 1) * 60000);
+  sessionTimer = setTimeout(checkSessionTimer, Math.min(remaining, 1) * 60000);
 }
 
-// Pause music when the tab is hidden
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) stopMusic();
 });
-
-// iOS: any first touch unlocks audio — handled in audio.unlockAudio
 
 window.addEventListener("DOMContentLoaded", init);

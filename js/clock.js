@@ -40,6 +40,11 @@ export function createClock(container, opts = {}) {
     highlightHour = null,  // e.g. 6 glows to guide for "half past"
   } = opts;
 
+  // State:
+  //  - idle: h is an integer 0..11, m is an integer 0..59
+  //  - dragging "minute": m may be a float 0..60 (wraps advance h)
+  //  - dragging "hour":   h may be a float 0..12 (m unchanged)
+  // On pointerup the values are snapped to the game's grid.
   let h = ((hour % 12) + 12) % 12;
   let m = ((minute % 60) + 60) % 60;
 
@@ -127,7 +132,7 @@ export function createClock(container, opts = {}) {
     // The parent <g> already translates to the clock center, so rotating the
     // inner <g> pivots around (0,0) in its local space == clock center.
     const hourAngle   = ((h % 12) + m / 60) * 30;
-    const minuteAngle = m * 6;
+    const minuteAngle = (m % 60) * 6;
     hourRot.setAttribute("transform", `rotate(${hourAngle})`);
     minRot.setAttribute("transform",  `rotate(${minuteAngle})`);
   }
@@ -136,7 +141,7 @@ export function createClock(container, opts = {}) {
 
   // ----- Interaction -------------------------------------------------------
   let dragging = null; // 'hour' | 'minute' | null
-  let lastSnapIndex = null;
+  let lastTickBucket = null; // for 5-min tick SFX during free drag
 
   function svgPoint(evt) {
     const rect = svg.getBoundingClientRect();
@@ -149,21 +154,11 @@ export function createClock(container, opts = {}) {
     return { x: vx, y: vy };
   }
 
-  function angleToMinutes(angle) {
-    // angle 0° = 12 o'clock; clockwise
-    return ((angle / 360) * 60 + 60) % 60;
-  }
-
   function pointAngle(p) {
     const dx = p.x - 100, dy = p.y - 100;
     let a = Math.atan2(dx, -dy) * 180 / Math.PI; // 0 at top
     if (a < 0) a += 360;
     return a;
-  }
-
-  function snapValue(minutes, snapTo) {
-    const step = snapTo;
-    return Math.round(minutes / step) * step % 60;
   }
 
   function onPointerDown(e) {
@@ -178,7 +173,7 @@ export function createClock(container, opts = {}) {
     // Ties break by radial distance (far = minute, near = hour).
     const tapA = pointAngle(p);
     const hourA = ((h % 12) + m / 60) * 30;
-    const minuteA = m * 6;
+    const minuteA = (m % 60) * 6;
     const dHour = angularDelta(tapA, hourA);
     const dMin  = angularDelta(tapA, minuteA);
     if (Math.abs(dHour - dMin) < 8) {
@@ -187,8 +182,13 @@ export function createClock(container, opts = {}) {
       dragging = dMin < dHour ? "minute" : "hour";
     }
     (dragging === "minute" ? minHand : hourHand).classList.add("dragging");
+    prevPointerAngle = tapA;
+    lastTickBucket = dragging === "minute"
+      ? `m${Math.round(m / 5)}`
+      : `h${Math.round(h)}`;
     e.preventDefault();
-    updateFromPointer(e);
+    // Don't update on the initial tap — wait for actual finger motion, so just
+    // touching a hand doesn't knock it to a new position.
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("pointercancel", onPointerUp);
@@ -203,51 +203,89 @@ export function createClock(container, opts = {}) {
   function onPointerUp() {
     if (!dragging) return;
     (dragging === "minute" ? minHand : hourHand).classList.remove("dragging");
+
+    // Snap to the game's grid on release. During drag the hands moved
+    // continuously for a natural "swirl" feel; here we commit to a valid
+    // grid value.
+    if (dragging === "minute") {
+      const snapped = snapMinuteTotal(m, snapMin);
+      // If snap rolls over 60 (e.g. m=58 → 60 with 5-min grid), advance hour.
+      if (snapped >= 60) {
+        m = snapped - 60;
+        h = (Math.floor(h) + 1) % 12;
+      } else {
+        m = snapped;
+        h = Math.floor(h) % 12;
+      }
+    } else {
+      // For hour drag we keep m as-is and snap h to nearest integer hour.
+      h = ((Math.round(h) % 12) + 12) % 12;
+    }
+    m = ((Math.round(m) % 60) + 60) % 60;
+    render();
+    onChange(h, m);
+
     dragging = null;
     window.removeEventListener("pointermove", onPointerMove);
     window.removeEventListener("pointerup", onPointerUp);
     window.removeEventListener("pointercancel", onPointerUp);
   }
 
+  // Accumulate pointer motion as an angular delta. This is far more natural
+  // than mapping absolute finger angle to a hand angle: the user can grab
+  // anywhere on the hand and "swirl" it; the hand follows the finger's rotation
+  // around the centre rather than snapping to wherever the finger happens to
+  // be pointing from (0,0).
+  let prevPointerAngle = 0;
+
   function updateFromPointer(e) {
     const p = svgPoint(e);
     const a = pointAngle(p);
+    let delta = a - prevPointerAngle;
+    if (delta > 180)  delta -= 360;
+    if (delta < -180) delta += 360;
+    prevPointerAngle = a;
+
     if (dragging === "minute") {
-      const raw = angleToMinutes(a);
-      const snapped = snapValue(raw, snapMin);
-      if (snapped !== m) {
-        m = snapped;
-        // hour hand creeps with minute hand; if minute crosses 12 going forward, bump hour
-        // detect wrap for natural behavior
-        // Simpler: only change m on drag; hour changes via its own hand unless coupled.
-        render();
-        const idx = Math.round(m / 5);
-        if (idx !== lastSnapIndex) {
-          lastSnapIndex = idx;
-          sfxTick(idx);
-          onTick(idx);
-        }
-        onChange(h, m);
-      }
+      // 6° of rotation = 1 minute
+      let newM = m + delta / 6;
+      // Allow wraps: if minute passes 60 going forward, roll hour. Same backward.
+      while (newM >= 60) { newM -= 60; h = (h + 1) % 12; }
+      while (newM < 0)   { newM += 60; h = (h + 11) % 12; }
+      m = newM;
     } else {
-      // hour hand: angle 0-360 → hour 0-12; allow partial using minute influence if snap === "1min"
-      const raw = a / 30; // 0..12
-      let newH;
-      if (snapMin === 60) {
-        // snapping to whole hours; minute stays
-        newH = Math.round(raw) % 12;
-      } else {
-        // snap to whole hour as well (minute hand controls minutes)
-        newH = Math.round(raw) % 12;
-      }
-      if (newH !== h) {
-        h = newH;
-        render();
-        sfxTick(h);
-        onTick(h);
-        onChange(h, m);
-      }
+      // 30° of rotation = 1 hour. Keep h fractional; minute is untouched.
+      let newH = h + delta / 30;
+      while (newH >= 12) newH -= 12;
+      while (newH < 0)   newH += 12;
+      h = newH;
     }
+    render();
+    maybeTick();
+    onChange(
+      ((Math.floor(h) % 12) + 12) % 12,
+      ((Math.round(m) % 60) + 60) % 60
+    );
+  }
+
+  function maybeTick() {
+    // Fire a musical tick each time we cross a 5-minute boundary (for minute
+    // drag) or an integer hour (for hour drag).
+    let bucket;
+    if (dragging === "minute") bucket = `m${Math.round(m / 5)}`;
+    else                       bucket = `h${Math.round(h)}`;
+    if (bucket !== lastTickBucket) {
+      lastTickBucket = bucket;
+      const idx = dragging === "minute" ? Math.round(m / 5) : Math.round(h);
+      sfxTick(idx);
+      onTick(idx);
+    }
+  }
+
+  // Snap a minute value to the game grid. Returns 0..60 (60 signals a forward
+  // hour wrap to be handled by the caller).
+  function snapMinuteTotal(raw, step) {
+    return Math.round(raw / step) * step;
   }
 
   if (draggable) {
