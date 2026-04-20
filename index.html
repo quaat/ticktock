@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#FFD9A8" />
+<title>TickTock Town</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div id="app" class="screen-root"></div>
+
+<template id="tpl-splash">
+  <div class="splash">
+    <div class="sky"></div>
+    <div class="sun"></div>
+    <div class="clouds"><div class="cloud c1"></div><div class="cloud c2"></div></div>
+    <div class="title-wrap">
+      <div id="splash-tikko" class="tikko-slot big"></div>
+      <h1 class="game-title">TickTock&nbsp;Town</h1>
+      <p class="subtitle" data-i18n="tap_to_start">Tap to start</p>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-language">
+  <div class="language">
+    <div id="lang-tikko" class="tikko-slot medium"></div>
+    <h2 data-i18n="choose_language">Choose your language</h2>
+    <div class="lang-buttons">
+      <button class="lang-btn" data-lang="en">
+        <div class="flag">🇬🇧</div>
+        <div class="lang-name">English</div>
+        <div class="lang-sample">"Hello! I'm Tikko!"</div>
+      </button>
+      <button class="lang-btn" data-lang="no">
+        <div class="flag">🇳🇴</div>
+        <div class="lang-name">Norsk</div>
+        <div class="lang-sample">"Hei! Jeg heter Tikko!"</div>
+      </button>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-onboarding">
+  <div class="onboarding">
+    <div id="ob-tikko" class="tikko-slot small float-left"></div>
+    <div class="speech-bubble"><span data-i18n="ob_drag">Can you move the big hand? Try it!</span>
+      <button class="replay-btn" aria-label="Replay">🔊</button>
+    </div>
+    <div id="ob-clock" class="clock-slot huge"></div>
+    <button class="primary-btn hidden" id="ob-continue" data-i18n="lets_go">Let's go!</button>
+  </div>
+</template>
+
+<template id="tpl-hub">
+  <div class="hub">
+    <div class="sky hub-sky"></div>
+    <div class="sun hub-sun"></div>
+    <div class="hills"></div>
+    <div class="town">
+      <button class="building b-bakery"     data-game="bakery"   aria-label="Bakery"><div class="b-icon">🥐</div><div class="b-label" data-i18n="b_bakery">Bakery</div><div class="b-stars"></div></button>
+      <button class="building b-garden"     data-game="garden"   aria-label="Garden"><div class="b-icon">🌻</div><div class="b-label" data-i18n="b_garden">Garden</div><div class="b-stars"></div></button>
+      <button class="building b-station"    data-game="station"  aria-label="Train Station"><div class="b-icon">🚂</div><div class="b-label" data-i18n="b_station">Station</div><div class="b-stars"></div></button>
+      <button class="building b-lighthouse" data-game="lighthouse" aria-label="Lighthouse"><div class="b-icon">🗼</div><div class="b-label" data-i18n="b_lighthouse">Lighthouse</div><div class="b-stars"></div></button>
+      <button class="building b-market"     data-game="market"   aria-label="Market"><div class="b-icon">🛒</div><div class="b-label" data-i18n="b_market">Market</div><div class="b-stars"></div></button>
+      <button class="building b-routine"    data-game="routine"  aria-label="Daily Routine"><div class="b-icon">📖</div><div class="b-label" data-i18n="b_routine">My Day</div><div class="b-stars"></div></button>
+      <button class="building b-tower"      data-game="freeplay" aria-label="Clock Tower"><div class="b-icon">🕰️</div><div class="b-label" data-i18n="b_tower">Tower</div></button>
+    </div>
+    <div id="hub-tikko" class="tikko-slot small float-hub"></div>
+    <div class="hub-bar">
+      <button class="hud-chip star-chip" id="star-count"><span>⭐</span><span id="star-n">0</span></button>
+      <button class="hud-chip" id="trophy-btn" aria-label="Trophy Room">🏆</button>
+      <button class="hud-chip" id="settings-btn" aria-label="Settings">⚙️</button>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-game">
+  <div class="game-screen">
+    <div class="game-top">
+      <button class="pause-btn" id="pause-btn" aria-label="Pause">⏸</button>
+      <div class="progress-dots" id="progress-dots"></div>
+      <button class="sound-btn" id="replay-audio" aria-label="Replay">🔊</button>
+    </div>
+    <div class="game-body" id="game-body"></div>
+    <div class="overlay hidden" id="overlay"></div>
+  </div>
+</template>
+
+<template id="tpl-trophy">
+  <div class="trophy-room">
+    <div class="room-top">
+      <button class="back-btn" id="back-btn" aria-label="Back">←</button>
+      <h2 data-i18n="trophy_title">Trophy Room</h2>
+    </div>
+    <div class="shelves" id="shelves"></div>
+    <div class="outfit-row">
+      <h3 data-i18n="tikkos_outfits">Tikko's Outfits</h3>
+      <div class="outfits" id="outfits"></div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-settings">
+  <div class="settings">
+    <div class="room-top">
+      <button class="back-btn" id="back-btn" aria-label="Back">←</button>
+      <h2 data-i18n="settings_title">Grown-ups</h2>
+    </div>
+    <div class="setting-group">
+      <h3 data-i18n="language">Language</h3>
+      <div class="row">
+        <button class="chip" data-set-lang="en">🇬🇧 English</button>
+        <button class="chip" data-set-lang="no">🇳🇴 Norsk</button>
+        <button class="chip" data-set-lang="both" data-i18n="both_langs">Both</button>
+      </div>
+    </div>
+    <div class="setting-group">
+      <h3 data-i18n="volume">Volume</h3>
+      <label class="slider-row"><span data-i18n="music">Music</span><input type="range" min="0" max="100" id="vol-music"></label>
+      <label class="slider-row"><span data-i18n="effects">Effects</span><input type="range" min="0" max="100" id="vol-sfx"></label>
+      <label class="slider-row"><span data-i18n="voice">Voice</span><input type="range" min="0" max="100" id="vol-voice"></label>
+    </div>
+    <div class="setting-group">
+      <h3 data-i18n="accessibility">Accessibility</h3>
+      <label class="toggle-row"><input type="checkbox" id="opt-motion"><span data-i18n="reduced_motion">Reduced motion</span></label>
+      <label class="toggle-row"><input type="checkbox" id="opt-dyslexia"><span data-i18n="dyslexia_font">Dyslexia-friendly font</span></label>
+      <label class="toggle-row"><input type="checkbox" id="opt-contrast"><span data-i18n="high_contrast">High contrast</span></label>
+    </div>
+    <div class="setting-group">
+      <h3 data-i18n="session">Session length</h3>
+      <div class="row">
+        <button class="chip" data-session="0" data-i18n="unlimited">Unlimited</button>
+        <button class="chip" data-session="5">5 min</button>
+        <button class="chip" data-session="10">10 min</button>
+        <button class="chip" data-session="15">15 min</button>
+        <button class="chip" data-session="20">20 min</button>
+      </div>
+    </div>
+    <div class="setting-group danger">
+      <button class="chip" id="reset-progress" data-i18n="reset_progress">Reset progress</button>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-parent-gate">
+  <div class="parent-gate">
+    <h2 data-i18n="gate_title">Grown-up check</h2>
+    <p data-i18n="gate_hint">Drag each slider to match its target.</p>
+    <div class="gate-slots" id="gate-slots"></div>
+    <button class="primary-btn" id="gate-submit" data-i18n="continue">Continue</button>
+    <button class="link-btn" id="gate-cancel" data-i18n="cancel">Cancel</button>
+  </div>
+</template>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
